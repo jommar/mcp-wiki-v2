@@ -73,7 +73,11 @@ server.registerTool(
         .string()
         .optional()
         .describe('Filter by wiki instance (e.g., "user-wiki", "transact-wiki")'),
-      limit: z.number().optional().default(100).describe('Maximum sections to return (default 100)'),
+      limit: z
+        .number()
+        .optional()
+        .default(100)
+        .describe('Maximum sections to return (default 100)'),
     },
     outputSchema: {
       sections: z
@@ -116,7 +120,11 @@ server.registerTool(
           'Filter by parent topic (e.g., "Portage Backend", "Approval Workflow Deep Dive")',
         ),
       wikiId: z.string().optional().describe('Filter by wiki instance'),
-      limit: z.number().optional().default(100).describe('Maximum sections to return (default 100)'),
+      limit: z
+        .number()
+        .optional()
+        .default(100)
+        .describe('Maximum sections to return (default 100)'),
     },
     outputSchema: {
       groups: z
