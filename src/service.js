@@ -177,7 +177,7 @@ export async function getSectionHistory(wikiId, key, limit) {
 
 // ─── WRITE OPERATIONS ───────────────────────────────────────────────────────────
 
-export async function createSection(wikiId, key, title, content, parent, tags) {
+export async function createSection(wikiId, key, title, content, parent, tags, relatedKeys) {
   const keyError = validateKey(key);
   if (keyError) return formatResponse({ created: false, error: keyError });
 
@@ -198,6 +198,7 @@ export async function createSection(wikiId, key, title, content, parent, tags) {
     content,
     parent: parent || null,
     tags: tags || [],
+    relatedKeys: relatedKeys || [],
   });
   if (result && result.key) {
     return formatResponse({
@@ -219,7 +220,7 @@ export async function createSection(wikiId, key, title, content, parent, tags) {
   });
 }
 
-export async function updateSection(wikiId, key, content, title, parent, tags, reason) {
+export async function updateSection(wikiId, key, content, title, parent, tags, reason, relatedKeys) {
   const keyError = validateKey(key);
   if (keyError) return formatResponse({ updated: false, error: keyError });
 
@@ -230,7 +231,7 @@ export async function updateSection(wikiId, key, content, title, parent, tags, r
     });
   }
 
-  const result = await db.updateSection({ wikiId, key, content, title, parent, tags, reason });
+  const result = await db.updateSection({ wikiId, key, content, title, parent, tags, reason, relatedKeys });
   if (result && result.key) {
     return formatResponse({
       key: result.key,
@@ -280,4 +281,80 @@ export async function exportWiki(outputDir, wikiId) {
     results = await wikiExport.exportAllWikis(outputDir);
   }
   return formatResponse({ results });
+}
+
+// ─── AUTO-LINK OPERATIONS ─────────────────────────────────────────────────────
+
+export async function autoLinkSections(wikiId, options = {}) {
+  const { minSimilarity = 0.1, maxLinks = 4, dryRun = false } = options;
+
+  const sections = await db.getAllSectionsWithEmbeddings(wikiId || null);
+  const sectionsWithEmbeddings = sections.filter((s) => s.embedding);
+
+  if (sectionsWithEmbeddings.length === 0) {
+    return formatResponse({
+      updated: 0,
+      skipped: sections.length,
+      dryRun: true,
+      message: 'No sections with embeddings found. Run import_wiki first to generate embeddings.',
+    });
+  }
+
+  const results = [];
+  let updated = 0;
+  let skipped = 0;
+
+  for (const section of sectionsWithEmbeddings) {
+    // Skip if already has outgoing links
+    const existingLinks = await db.getOutgoingLinks(section.wikiId, section.key);
+    if (existingLinks.length > 0) {
+      skipped++;
+      continue;
+    }
+
+    // Find similar sections
+    const similar = await db.findSimilarSections(section.key, wikiId, maxLinks + 2);
+    const filtered = similar.filter((s) => s.similarity >= minSimilarity).slice(0, maxLinks);
+
+    if (filtered.length < 2) {
+      skipped++;
+      continue;
+    }
+
+    if (dryRun) {
+      results.push({
+        key: section.key,
+        title: section.title,
+        related: filtered.map((s) => ({ key: s.key, title: s.title, similarity: s.similarity })),
+      });
+    } else {
+      let inserted = 0;
+      for (const target of filtered) {
+        const ok = await db.insertSectionLink(section.wikiId, section.key, target.wikiId, target.key);
+        if (ok) inserted++;
+      }
+      if (inserted > 0) {
+        updated++;
+        results.push({
+          key: section.key,
+          title: section.title,
+          related: filtered.map((s) => ({ key: s.key, title: s.title, similarity: s.similarity })),
+        });
+      } else {
+        skipped++;
+      }
+    }
+  }
+
+  return formatResponse({
+    wikiId: wikiId || 'all',
+    updated,
+    skipped,
+    total: sectionsWithEmbeddings.length,
+    dryRun,
+    results: results.slice(0, 50),
+    message: dryRun
+      ? `Dry run: ${results.length} sections would get related links. Set dryRun=false to apply.`
+      : `Inserted related links for ${updated} sections into section_links.`,
+  });
 }

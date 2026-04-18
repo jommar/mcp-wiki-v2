@@ -13,18 +13,33 @@ const pool = new Pool({
 
 /**
  * Export wiki sections to a single markdown file.
- * @param {string} wikiId - Wiki instance ID
- * @param {string} outputDir - Directory to write the file to
- * @returns {Promise<{ wikiId: string, exported: number, filePath: string }>}
+ * Appends **Related:** blocks from section_links to each section.
  */
 export async function exportWiki(wikiId, outputDir) {
   const { rows: sections } = await pool.query(
-    'SELECT key, parent, title, content FROM wiki_sections WHERE wiki_id = $1 ORDER BY parent, key',
+    'SELECT key, wiki_id, parent, title, content FROM wiki_sections WHERE wiki_id = $1 ORDER BY parent, key',
     [wikiId],
   );
 
   if (sections.length === 0) {
     return { wikiId, exported: 0, filePath: null };
+  }
+
+  // Fetch all outgoing links for these sections
+  const { rows: links } = await pool.query(
+    `SELECT from_key, to_key, ws.title as to_title
+     FROM section_links sl
+     JOIN wiki_sections ws ON ws.wiki_id = sl.to_wiki_id AND ws.key = sl.to_key
+     WHERE sl.from_wiki_id = $1
+     ORDER BY from_key`,
+    [wikiId],
+  );
+
+  // Group links by from_key
+  const linksBySection = new Map();
+  for (const link of links) {
+    if (!linksBySection.has(link.from_key)) linksBySection.set(link.from_key, []);
+    linksBySection.get(link.from_key).push({ key: link.to_key, title: link.to_title });
   }
 
   // Build one monolithic file, grouped by parent
@@ -43,6 +58,13 @@ export async function exportWiki(wikiId, outputDir) {
 
     content += `## ${section.title} {#${section.key}}\n\n`;
     content += section.content + '\n\n';
+
+    // Append **Related:** block from section_links
+    const related = linksBySection.get(section.key);
+    if (related && related.length > 0) {
+      content += `**Related:** ${related.map((r) => `[[${r.key}]]`).join(', ')}\n\n`;
+    }
+
     content += '---\n\n';
     totalWritten++;
   }

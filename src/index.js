@@ -30,6 +30,9 @@ const requestCounts = {
   get_backlinks: 0,
   validate_wiki: 0,
   get_section_history: 0,
+  import_wiki: 0,
+  export_wiki: 0,
+  auto_link_sections: 0,
 };
 
 const readOnlyAnnotations = { readOnlyHint: true };
@@ -484,6 +487,7 @@ server.registerTool(
       content: z.string().describe('Markdown content'),
       parent: z.string().optional().describe('Parent topic name'),
       tags: z.array(z.string()).optional().describe('Tags for categorization'),
+      relatedKeys: z.array(z.string()).optional().describe('Section keys to link to (populates section_links)'),
     },
     outputSchema: {
       key: z.string().optional().describe('Created section key'),
@@ -493,11 +497,11 @@ server.registerTool(
       error: z.string().optional().describe('Error message if creation failed'),
     },
   },
-  async ({ wikiId, key, title, content, parent, tags }) => {
+  async ({ wikiId, key, title, content, parent, tags, relatedKeys }) => {
     try {
       requestCounts.create_section++;
       logger.info('create_section', { wikiId, key, title });
-      return await service.createSection(wikiId, key, title, content, parent, tags);
+      return await service.createSection(wikiId, key, title, content, parent, tags, relatedKeys);
     } catch (err) {
       logger.error('create_section failed', { key, error: err.message });
       return service.formatResponse({ created: false, error: err.message });
@@ -517,6 +521,7 @@ server.registerTool(
       parent: z.string().optional().describe('New parent topic'),
       tags: z.array(z.string()).optional().describe('New tags'),
       reason: z.string().optional().describe('Reason for the change (recorded in history)'),
+      relatedKeys: z.array(z.string()).optional().describe('Replace outgoing links with these section keys'),
     },
     outputSchema: {
       key: z.string().optional().describe('Updated section key'),
@@ -526,11 +531,11 @@ server.registerTool(
       error: z.string().optional().describe('Error message if update failed'),
     },
   },
-  async ({ wikiId, key, content, title, parent, tags, reason }) => {
+  async ({ wikiId, key, content, title, parent, tags, reason, relatedKeys }) => {
     try {
       requestCounts.update_section++;
       logger.info('update_section', { wikiId, key, reason });
-      return await service.updateSection(wikiId, key, content, title, parent, tags, reason);
+      return await service.updateSection(wikiId, key, content, title, parent, tags, reason, relatedKeys);
     } catch (err) {
       logger.error('update_section failed', { key, error: err.message });
       return service.formatResponse({ updated: false, error: err.message });
@@ -583,6 +588,7 @@ server.registerTool(
     outputSchema: {
       wikiId: z.string().describe('Wiki instance ID that was imported into'),
       imported: z.number().describe('Number of sections imported'),
+      linksInserted: z.number().optional().describe('Number of section_links populated from **Related:** patterns'),
       errors: z.array(z.string()).describe('List of errors for sections that failed to import'),
       error: z.string().optional().describe('Error message if import failed entirely'),
     },
@@ -640,6 +646,77 @@ server.registerTool(
     } catch (err) {
       logger.error('export_wiki failed', { outputDir, error: err.message });
       return service.formatResponse({ results: [], error: err.message });
+    }
+  },
+);
+
+server.registerTool(
+  'auto_link_sections',
+  {
+    description:
+      'Automatically find related sections using vector embeddings and append **Related:** [[key]] blocks to sections that lack them. Uses cosine similarity on stored embeddings. Run dryRun=true first to preview changes without modifying content.',
+    inputSchema: {
+      wikiId: z.string().optional().describe('Wiki instance ID to process'),
+      minSimilarity: z
+        .number()
+        .optional()
+        .default(0.1)
+        .describe('Minimum cosine similarity threshold (0-1, default 0.1)'),
+      maxLinks: z
+        .number()
+        .optional()
+        .default(4)
+        .describe('Maximum number of related links per section (default 4)'),
+      dryRun: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Preview mode — show what would change without modifying content'),
+    },
+    outputSchema: {
+      wikiId: z.string().describe('Wiki instance ID that was processed'),
+      updated: z.number().describe('Number of sections updated'),
+      skipped: z.number().describe('Number of sections skipped (already have links or no match)'),
+      total: z.number().describe('Total sections with embeddings'),
+      dryRun: z.boolean().describe('Whether this was a dry run'),
+      results: z
+        .array(
+          z.object({
+            key: z.string().describe('Section key'),
+            title: z.string().describe('Section title'),
+            related: z
+              .array(
+                z.object({
+                  key: z.string().describe('Related section key'),
+                  title: z.string().describe('Related section title'),
+                  similarity: z.number().describe('Cosine similarity score'),
+                }),
+              )
+              .describe('Related sections that would be/were linked'),
+          }),
+        )
+        .describe('Details of updated sections (max 50)'),
+      message: z.string().describe('Summary message'),
+      error: z.string().optional().describe('Error message if request failed'),
+    },
+  },
+  async ({ wikiId, minSimilarity, maxLinks, dryRun }) => {
+    try {
+      requestCounts.auto_link_sections = (requestCounts.auto_link_sections || 0) + 1;
+      logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks, dryRun });
+      return await service.autoLinkSections(wikiId, { minSimilarity, maxLinks, dryRun });
+    } catch (err) {
+      logger.error('auto_link_sections failed', { wikiId, error: err.message });
+      return service.formatResponse({
+        wikiId: wikiId || '',
+        updated: 0,
+        skipped: 0,
+        total: 0,
+        dryRun,
+        results: [],
+        message: '',
+        error: err.message,
+      });
     }
   },
 );
