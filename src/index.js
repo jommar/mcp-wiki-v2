@@ -196,6 +196,7 @@ server.registerTool(
       limit: z.number().optional().default(MAX_CONTENT_LENGTH).describe(`Max characters to return. Default is ${MAX_CONTENT_LENGTH}.`),
     },
     outputSchema: {
+      key: z.string().optional().describe('Section slug key'),
       title: z.string().optional().describe('Section display title'),
       parent: z.string().optional().describe('Parent topic name'),
       breadcrumbs: z.array(z.string()).optional().describe('Heading hierarchy from root to parent'),
@@ -246,7 +247,18 @@ server.registerTool(
 
       logger.info('get_wiki_section', { key, wikiId, contentLength: section.content.length, totalLength: section.totalLength });
       return withContent({
-        ...section,
+        key: section.key,
+        title: section.title,
+        parent: section.parent,
+        breadcrumbs: section.breadcrumbs,
+        wikiId: section.wikiId,
+        source: section.source,
+        content: section.content,
+        totalLength: section.totalLength,
+        offset: section.offset,
+        limit: section.limit,
+        hasMore: section.hasMore,
+        nextOffset: section.nextOffset,
         relatedSections,
       });
     } catch (err) {
