@@ -1,3 +1,6 @@
+// Used by: scripts/import-wiki-to-db.js (import.js → WikiParser)
+// Not used by: src/index.js, src/service.js, src/db.js (MCP server tools)
+
 import fs from 'fs';
 import path from 'path';
 import { lexer } from 'marked';

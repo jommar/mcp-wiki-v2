@@ -11,6 +11,11 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'wiki',
 });
 
+// Enable required extensions
+pool.query('CREATE EXTENSION IF NOT EXISTS fuzzystrmatch').catch(() => {
+  // Ignore - extension may already exist or require superuser
+});
+
 /**
  * List all sections with optional wiki_id filter.
  */
@@ -397,7 +402,7 @@ export async function validateWiki(wikiId = null) {
 /**
  * Create a new section.
  */
-export async function createSection({ wikiId, key, title, content, parent = null, tags = [] }) {
+export async function createSection({ wikiId, key, title, content, parent = null, tags = [], relatedKeys = [] }) {
   // Check for existing section first to give a clear error
   const { rows: existing } = await pool.query(
     'SELECT key FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
@@ -427,6 +432,11 @@ export async function createSection({ wikiId, key, title, content, parent = null
     } catch (err) {
       logger.warn('Failed to generate embedding on create', { key, error: err.message });
     }
+
+    // Insert explicit related links
+    for (const targetKey of relatedKeys) {
+      await insertSectionLink(wikiId, key, wikiId, targetKey);
+    }
   }
 
   return rows[0] || null;
@@ -435,7 +445,7 @@ export async function createSection({ wikiId, key, title, content, parent = null
 /**
  * Update an existing section.
  */
-export async function updateSection({ wikiId, key, content, title, parent, tags, reason }) {
+export async function updateSection({ wikiId, key, content, title, parent, tags, reason, relatedKeys }) {
   // Check existence first
   const { rows: existing } = await pool.query(
     'SELECT key, title, content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
@@ -466,7 +476,21 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
     params.push(tags);
   }
 
-  if (updates.length === 0) return { noChanges: true };
+  if (updates.length === 0 && relatedKeys === undefined) return { noChanges: true };
+
+  // If only relatedKeys changed, skip the UPDATE query entirely
+  if (updates.length === 0) {
+    // Clear existing outgoing links
+    await pool.query(
+      `DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`,
+      [wikiId, key],
+    );
+    // Insert new links
+    for (const targetKey of relatedKeys) {
+      await insertSectionLink(wikiId, key, wikiId, targetKey);
+    }
+    return existing[0];
+  }
 
   updates.push('updated_at = NOW()');
   params.push(wikiId, key);
@@ -503,6 +527,19 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
       ]);
     } catch (err) {
       logger.warn('Failed to regenerate embedding on update', { key, error: err.message });
+    }
+  }
+
+  // Sync section_links if relatedKeys provided
+  if (rows.length > 0 && relatedKeys !== undefined) {
+    // Clear existing outgoing links
+    await pool.query(
+      `DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`,
+      [wikiId, key],
+    );
+    // Insert new links
+    for (const targetKey of relatedKeys) {
+      await insertSectionLink(wikiId, key, wikiId, targetKey);
     }
   }
 
@@ -572,6 +609,146 @@ export async function findSimilar(query, wikiId = null, maxResults = 5) {
   );
 
   return rows.map((r) => ({ key: r.key, wikiId: r.wiki_id, title: r.title, distance: r.distance }));
+}
+
+/**
+ * Find similar sections for a given section using vector embeddings.
+ * Returns the top N most similar sections (excluding self).
+ */
+export async function findSimilarSections(key, wikiId = null, limit = 4) {
+  const params = [key];
+  let whereClause = 'WHERE s.key = $1';
+  if (wikiId) {
+    whereClause += ' AND s.wiki_id = $2';
+    params.push(wikiId);
+  }
+
+  // First get the embedding for the target section
+  const { rows: targetRows } = await pool.query(
+    `SELECT key, wiki_id, embedding FROM wiki_sections s ${whereClause}`,
+    params,
+  );
+  if (targetRows.length === 0 || !targetRows[0].embedding) return [];
+
+  const targetEmbedding = targetRows[0].embedding;
+  const targetWikiId = targetRows[0].wiki_id;
+
+  // Find most similar sections using cosine distance
+  const { rows } = await pool.query(
+    `
+    SELECT key, wiki_id, parent, title,
+           1 - (embedding <=> $1) as similarity
+    FROM wiki_sections
+    WHERE wiki_id = $2
+      AND key != $3
+      AND embedding IS NOT NULL
+    ORDER BY embedding <=> $1
+    LIMIT $4
+  `,
+    [targetEmbedding, targetWikiId, key, limit],
+  );
+
+  return rows.map((r) => ({
+    key: r.key,
+    wikiId: r.wiki_id,
+    parent: r.parent || 'Root',
+    title: r.title,
+    similarity: r.similarity,
+  }));
+}
+
+/**
+ * Get all sections with their embeddings for batch similarity computation.
+ */
+export async function getAllSectionsWithEmbeddings(wikiId = null) {
+  const params = [];
+  let whereClause = '';
+  if (wikiId) {
+    whereClause = 'WHERE wiki_id = $1';
+    params.push(wikiId);
+  }
+
+  const { rows } = await pool.query(
+    `SELECT key, wiki_id, parent, title, content, embedding
+     FROM wiki_sections
+     ${whereClause}
+     ORDER BY key`,
+    params,
+  );
+
+  return rows.map((r) => ({
+    key: r.key,
+    wikiId: r.wiki_id,
+    parent: r.parent || 'Root',
+    title: r.title,
+    content: r.content,
+    embedding: r.embedding,
+  }));
+}
+
+/**
+ * Insert a link into section_links (ON CONFLICT DO NOTHING).
+ */
+export async function insertSectionLink(fromWikiId, fromKey, toWikiId, toKey) {
+  const { rowCount } = await pool.query(
+    `INSERT INTO section_links (from_wiki_id, from_key, to_wiki_id, to_key)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT DO NOTHING`,
+    [fromWikiId, fromKey, toWikiId, toKey],
+  );
+  return rowCount > 0;
+}
+
+/**
+ * Get all outgoing links for a section (what it links to).
+ */
+export async function getOutgoingLinks(wikiId, key) {
+  const { rows } = await pool.query(
+    `SELECT sl.to_key, ws.title as to_title
+     FROM section_links sl
+     JOIN wiki_sections ws ON ws.wiki_id = sl.to_wiki_id AND ws.key = sl.to_key
+     WHERE sl.from_wiki_id = $1 AND sl.from_key = $2
+     ORDER BY ws.title`,
+    [wikiId, key],
+  );
+  return rows.map((r) => ({ key: r.to_key, title: r.to_title }));
+}
+
+/**
+ * Update section content and regenerate embedding.
+ */
+export async function updateSectionContent(key, wikiId, content, reason = 'auto-link') {
+  const { rows } = await pool.query(
+    `UPDATE wiki_sections
+     SET content = $1, updated_at = NOW()
+     WHERE wiki_id = $2 AND key = $3
+     RETURNING id, key, wiki_id, title`,
+    [content, wikiId, key],
+  );
+
+  // Regenerate embedding
+  if (rows.length > 0) {
+    try {
+      const { rows: sectionRows } = await pool.query(
+        'SELECT title, content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
+        [wikiId, key],
+      );
+      if (sectionRows.length > 0) {
+        const { getEmbedding } = await import('./embedding.js');
+        const embedding = await getEmbedding(
+          `${sectionRows[0].title}\n${sectionRows[0].content.slice(0, 2000)}`,
+        );
+        await pool.query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
+          JSON.stringify(embedding),
+          rows[0].id,
+        ]);
+      }
+    } catch (err) {
+      logger.warn('Failed to regenerate embedding on auto-link', { key, error: err.message });
+    }
+  }
+
+  return rows[0] || null;
 }
 
 export { pool };
