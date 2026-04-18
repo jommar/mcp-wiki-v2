@@ -470,10 +470,10 @@ server.registerTool(
       logger.info('get_section_history', { key, wikiId, count: history.length });
       return withContent({
         history: history.map(h => ({
-          contentBefore: h.content_before,
+          contentBefore: h.content_before ?? undefined,
           contentAfter: h.content_after,
-          changedAt: h.changed_at,
-          changeReason: h.change_reason,
+          changedAt: h.changed_at instanceof Date ? h.changed_at.toISOString() : String(h.changed_at),
+          changeReason: h.change_reason ?? undefined,
         })),
         count: history.length,
       });
