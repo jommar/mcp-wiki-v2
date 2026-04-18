@@ -1,6 +1,7 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 import { logger } from '../logger.js';
+import { getEmbedding } from './embedding.js';
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
@@ -68,7 +69,48 @@ export async function browseSections(topic, wikiId = null) {
 }
 
 /**
+ * Semantic search using vector embeddings (cosine distance).
+ */
+async function searchSemantic(query, { wikiId, limit }) {
+  try {
+    const embedding = await getEmbedding(query);
+    const params = [JSON.stringify(embedding)];
+    let whereClause = '';
+    if (wikiId) {
+      whereClause = `WHERE wiki_id = $2`;
+      params.push(wikiId);
+    }
+
+    const searchQuery = `
+      SELECT key, wiki_id, parent, title, metadata->'breadcrumbs' as breadcrumbs,
+             1 - (embedding <=> $1) as similarity,
+             LENGTH(content) as content_length
+      FROM wiki_sections
+      ${whereClause} ${whereClause ? 'AND' : 'WHERE'} embedding IS NOT NULL
+      ORDER BY embedding <=> $1
+      LIMIT $${params.length + 1}
+    `;
+    params.push(limit);
+
+    const { rows } = await pool.query(searchQuery, params);
+    return rows.map(r => ({
+      key: r.key,
+      wikiId: r.wiki_id,
+      parent: r.parent || 'Root',
+      title: r.title,
+      breadcrumbs: r.breadcrumbs || [],
+      rank: r.similarity,
+      contentLength: r.content_length,
+    }));
+  } catch (err) {
+    logger.warn('Semantic search failed, falling back to keyword', { error: err.message });
+    return [];
+  }
+}
+
+/**
  * Search sections using full-text search (tsvector).
+ * Tries semantic search first; falls back to keyword if no embeddings exist.
  */
 export async function searchSections(query, { wikiId = null, fuzzy = false, limit = 20 } = {}) {
   if (fuzzy) {
@@ -76,6 +118,15 @@ export async function searchSections(query, { wikiId = null, fuzzy = false, limi
     return searchFuzzy(query, { wikiId, limit });
   }
 
+  // Try semantic search first
+  const semanticResults = await searchSemantic(query, { wikiId, limit });
+
+  // If we got results with meaningful similarity, use them
+  if (semanticResults.length > 0 && semanticResults.some(r => r.rank > 0.1)) {
+    return semanticResults;
+  }
+
+  // Fall back to keyword search
   const params = [];
   let whereClause = '';
 
@@ -344,8 +395,21 @@ export async function createSection({ wikiId, key, title, content, parent = null
   const { rows } = await pool.query(`
     INSERT INTO wiki_sections (wiki_id, key, parent, title, content, tags, status, metadata)
     VALUES ($1, $2, $3, $4, $5, $6::varchar(100)[], 'active', $7)
-    RETURNING key, wiki_id, title, parent
+    RETURNING id, key, wiki_id, title, parent
   `, [wikiId, key, parent, title, content, tags, JSON.stringify({ breadcrumbs: [] })]);
+
+  // Generate and store embedding
+  if (rows.length > 0) {
+    try {
+      const embedding = await getEmbedding(`${title}\n${content.slice(0, 2000)}`);
+        await pool.query(
+          'UPDATE wiki_sections SET embedding = $1 WHERE id = $2',
+          [JSON.stringify(embedding), rows[0].id]
+        );
+      } catch (err) {
+        logger.warn('Failed to generate embedding on create', { key, error: err.message });
+    }
+  }
 
   return rows[0] || null;
 }
@@ -356,7 +420,7 @@ export async function createSection({ wikiId, key, title, content, parent = null
 export async function updateSection({ wikiId, key, content, title, parent, tags, reason }) {
   // Check existence first
   const { rows: existing } = await pool.query(
-    'SELECT key, title FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
+    'SELECT key, title, content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
     [wikiId, key]
   );
   if (existing.length === 0) {
@@ -380,7 +444,7 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
   const { rows } = await pool.query(`
     UPDATE wiki_sections SET ${updates.join(', ')}
     WHERE wiki_id = $${paramIdx} AND key = $${paramIdx + 1}
-    RETURNING key, wiki_id, title, parent
+    RETURNING id, key, wiki_id, title, parent
   `, params);
 
   // Log history if content changed
@@ -389,6 +453,21 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
       INSERT INTO section_history (wiki_id, section_key, content_after, change_reason)
       VALUES ($1, $2, $3, $4)
     `, [wikiId, key, content, reason || 'update']);
+  }
+
+  // Regenerate embedding if content or title changed
+  if (rows.length > 0 && (content !== undefined || title !== undefined)) {
+    try {
+      const newTitle = title !== undefined ? title : existing[0].title;
+      const newContent = content !== undefined ? content : existing[0].content;
+      const embedding = await getEmbedding(`${newTitle}\n${newContent.slice(0, 2000)}`);
+      await pool.query(
+        'UPDATE wiki_sections SET embedding = $1 WHERE id = $2',
+        [JSON.stringify(embedding), rows[0].id]
+      );
+    } catch (err) {
+      logger.warn('Failed to regenerate embedding on update', { key, error: err.message });
+    }
   }
 
   return rows[0] || null;

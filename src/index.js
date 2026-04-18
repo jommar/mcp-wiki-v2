@@ -140,9 +140,9 @@ server.registerTool(
 server.registerTool(
   'search_wiki',
   {
-    description: 'Search wiki section titles and content by keyword. Returns matching section keys with snippets. Header matches are prioritized over content matches.',
+    description: 'Search wiki sections by meaning (semantic search). Falls back to keyword matching if embeddings are unavailable. Returns matching section keys ranked by relevance.',
     inputSchema: {
-      query: z.string().min(1).max(200).describe('Keyword to search'),
+      query: z.string().min(1).max(200).describe('Search query — can be natural language or keywords'),
       wikiId: z.string().optional().describe('Filter by wiki instance'),
       fuzzy: z.boolean().optional().default(false).describe('Enable fuzzy matching for typos'),
       limit: z.number().optional().default(20).describe('Maximum number of results to return'),

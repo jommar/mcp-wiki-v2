@@ -3,6 +3,7 @@ import pkg from 'pg';
 const { Pool } = pkg;
 import { config } from 'dotenv';
 import { logger } from '../logger.js';
+import { getEmbedding } from '../src/embedding.js';
 
 config();
 
@@ -51,7 +52,7 @@ async function importWiki(source) {
 
       const meta = parser.getMeta(key);
 
-      await client.query(`
+      const { rows: idRows } = await client.query(`
         INSERT INTO wiki_sections (wiki_id, key, parent, title, content, tags, status, metadata)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (wiki_id, key) DO UPDATE SET
@@ -62,6 +63,7 @@ async function importWiki(source) {
           status = EXCLUDED.status,
           metadata = EXCLUDED.metadata,
           updated_at = NOW()
+        RETURNING id
       `, [
         source.wikiId,
         key,
@@ -79,6 +81,19 @@ async function importWiki(source) {
           legacyKey: section.legacyKey,
         }),
       ]);
+
+      // Generate and store embedding
+      if (idRows.length > 0) {
+        try {
+          const embedding = await getEmbedding(`${section.title}\n${section.content.slice(0, 2000)}`);
+          await client.query(
+            'UPDATE wiki_sections SET embedding = $1 WHERE id = $2',
+            [JSON.stringify(embedding), idRows[0].id]
+          );
+        } catch (err) {
+          logger.warn(`Failed to generate embedding for ${source.wikiId}/${key}`, { error: err.message });
+        }
+      }
 
       imported++;
     }

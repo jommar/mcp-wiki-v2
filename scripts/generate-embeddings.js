@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { config } from 'dotenv';
 import { logger } from '../logger.js';
+import { getEmbedding } from '../src/embedding.js';
 
 config();
 
@@ -11,34 +12,6 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD || 'wiki',
   database: process.env.DB_NAME || 'wiki',
 });
-
-/**
- * Generate embeddings using OpenRouter or local llama.cpp.
- * Override this function to use your preferred embedding provider.
- *
- * Default: uses a simple hash-based placeholder (not real embeddings).
- * Replace with actual API call for production use.
- *
- * Example with OpenRouter (requires OPENROUTER_API_KEY env var):
- *
- *   const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
- *     method: 'POST',
- *     headers: {
- *       'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
- *       'Content-Type': 'application/json',
- *     },
- *     body: JSON.stringify({
- *       model: 'nomic-ai/nomic-embed-text-v1.5',
- *       input: text,
- *     }),
- *   });
- *   const data = await response.json();
- *   return data.data[0].embedding;
- */
-async function getEmbedding(text) {
-  // Placeholder: returns a zero vector. Replace with real embedding API.
-  return new Array(384).fill(0);
-}
 
 async function generateEmbeddings(batchSize = 50) {
   let offset = 0;
@@ -63,7 +36,7 @@ async function generateEmbeddings(batchSize = 50) {
 
         await pool.query(
           'UPDATE wiki_sections SET embedding = $1 WHERE id = $2',
-          [embedding, row.id]
+          [JSON.stringify(embedding), row.id]
         );
 
         totalProcessed++;
