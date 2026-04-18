@@ -332,10 +332,18 @@ export async function validateWiki(wikiId = null) {
  * Create a new section.
  */
 export async function createSection({ wikiId, key, title, content, parent = null, tags = [] }) {
+  // Check for existing section first to give a clear error
+  const { rows: existing } = await pool.query(
+    'SELECT key FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
+    [wikiId, key]
+  );
+  if (existing.length > 0) {
+    return { exists: true };
+  }
+
   const { rows } = await pool.query(`
     INSERT INTO wiki_sections (wiki_id, key, parent, title, content, tags, status, metadata)
-    VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
-    ON CONFLICT (wiki_id, key) DO NOTHING
+    VALUES ($1, $2, $3, $4, $5, $6::varchar(100)[], 'active', $7)
     RETURNING key, wiki_id, title, parent
   `, [wikiId, key, parent, title, content, tags, JSON.stringify({ breadcrumbs: [] })]);
 
@@ -346,6 +354,15 @@ export async function createSection({ wikiId, key, title, content, parent = null
  * Update an existing section.
  */
 export async function updateSection({ wikiId, key, content, title, parent, tags, reason }) {
+  // Check existence first
+  const { rows: existing } = await pool.query(
+    'SELECT key, title FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
+    [wikiId, key]
+  );
+  if (existing.length === 0) {
+    return { notFound: true };
+  }
+
   const updates = [];
   const params = [];
   let paramIdx = 1;
@@ -353,9 +370,9 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
   if (content !== undefined) { updates.push(`content = $${paramIdx++}`); params.push(content); }
   if (title !== undefined) { updates.push(`title = $${paramIdx++}`); params.push(title); }
   if (parent !== undefined) { updates.push(`parent = $${paramIdx++}`); params.push(parent || null); }
-  if (tags !== undefined) { updates.push(`tags = $${paramIdx++}`); params.push(tags); }
+  if (tags !== undefined) { updates.push(`tags = $${paramIdx++}::varchar(100)[]`); params.push(tags); }
 
-  if (updates.length === 0) return null;
+  if (updates.length === 0) return { noChanges: true };
 
   updates.push('updated_at = NOW()');
   params.push(wikiId, key);

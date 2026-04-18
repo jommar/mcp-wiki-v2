@@ -9,12 +9,15 @@ config();
 
 const MAX_BATCH_KEYS = 20;
 const MAX_CONTENT_LENGTH = 8000;
+const MAX_CONTENT_SIZE = 50000; // 50KB hard limit for writes
 const KEY_PATTERN = /^[a-z0-9-]+$/;
 
 function validateKey(key) {
+  if (!key || !key.trim()) return 'Key cannot be empty';
   if (!KEY_PATTERN.test(key)) {
     return `Invalid key format: "${key}". Keys must be lowercase alphanumeric with hyphens`;
   }
+  if (key.length > 255) return `Key too long (${key.length} chars, max 255)`;
   return null;
 }
 
@@ -512,12 +515,22 @@ server.registerTool(
       const keyError = validateKey(key);
       if (keyError) return withContent({ created: false, error: keyError });
 
+      if (!content || !content.trim()) {
+        return withContent({ created: false, error: 'Content cannot be empty' });
+      }
+      if (content.length > MAX_CONTENT_SIZE) {
+        return withContent({ created: false, error: `Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})` });
+      }
+
       const result = await db.createSection({ wikiId, key, title, content, parent: parent || null, tags: tags || [] });
-      if (result) {
+      if (result && result.key) {
         logger.info('create_section', { wikiId, key, title });
         return withContent({ key: result.key, wikiId: result.wiki_id, title: result.title, created: true });
       }
-      return withContent({ created: false, error: `Section '${key}' already exists in ${wikiId}` });
+      if (result && result.exists) {
+        return withContent({ created: false, error: `Section '${key}' already exists in ${wikiId}` });
+      }
+      return withContent({ created: false, error: `Failed to create section '${key}' in ${wikiId}` });
     } catch (err) {
       logger.error('create_section failed', { key, error: err.message });
       return withContent({ created: false, error: err.message });
@@ -549,12 +562,25 @@ server.registerTool(
   async ({ wikiId, key, content, title, parent, tags, reason }) => {
     try {
       requestCounts.update_section++;
+      const keyError = validateKey(key);
+      if (keyError) return withContent({ updated: false, error: keyError });
+
+      if (content !== undefined && content.length > MAX_CONTENT_SIZE) {
+        return withContent({ updated: false, error: `Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})` });
+      }
+
       const result = await db.updateSection({ wikiId, key, content, title, parent, tags, reason });
-      if (result) {
+      if (result && result.key) {
         logger.info('update_section', { wikiId, key, reason });
         return withContent({ key: result.key, wikiId: result.wiki_id, title: result.title, updated: true });
       }
-      return withContent({ updated: false, error: `Section '${key}' not found in ${wikiId}` });
+      if (result && result.notFound) {
+        return withContent({ updated: false, error: `Section '${key}' not found in ${wikiId}` });
+      }
+      if (result && result.noChanges) {
+        return withContent({ updated: false, error: 'No fields provided to update' });
+      }
+      return withContent({ updated: false, error: `Failed to update section '${key}' in ${wikiId}` });
     } catch (err) {
       logger.error('update_section failed', { key, error: err.message });
       return withContent({ updated: false, error: err.message });
