@@ -59,7 +59,7 @@ Or configure your MCP client:
 |------|-------------|
 | `list_wiki` | List all sections, optionally filtered by `wikiId` |
 | `browse_wiki` | Browse sections grouped by parent topic |
-| `search_wiki` | Full-text search with fuzzy matching support |
+| `search_wiki` | Semantic search by meaning (falls back to keyword if embeddings unavailable) |
 | `get_wiki_section` | Get a single section with content pagination |
 | `get_wiki_sections` | Batch retrieve multiple sections |
 | `get_wiki_info` | Get wiki instance metadata and section counts |
@@ -68,9 +68,16 @@ Or configure your MCP client:
 
 | Tool | Description |
 |------|-------------|
-| `create_section` | Create a new wiki section |
-| `update_section` | Update an existing section (history auto-tracked) |
+| `create_section` | Create a new wiki section (embedding auto-generated) |
+| `update_section` | Update an existing section (embedding auto-regenerated, history auto-tracked) |
 | `delete_section` | Delete a section and its backlinks |
+
+### Import/Export Tools
+
+| Tool | Description |
+|------|-------------|
+| `import_wiki` | Import markdown files or directories (embeddings auto-generated) |
+| `export_wiki` | Export wiki sections to markdown files |
 
 ### Management Tools
 
@@ -113,11 +120,14 @@ node scripts/export-wiki-to-md.js --output /tmp/wiki-export
 
 ### Embeddings
 
+Embeddings are generated automatically on every write operation (create, update, import).
+The batch script is only needed for seeding existing sections that lack embeddings:
+
 ```bash
 node scripts/generate-embeddings.js
 ```
 
-Requires configuring an embedding provider in the script (OpenRouter example included).
+Uses `@xenova/transformers` with `all-MiniLM-L6-v2` (384-dim, quantized) — runs locally with no API key required.
 
 ## Database Schema
 

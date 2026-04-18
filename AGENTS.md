@@ -14,21 +14,26 @@ This is a PostgreSQL-backed wiki system exposed via MCP tools. You can read, wri
 
 ### Reading
 
-4. **`search_wiki`** — Search by keyword (preferred over list_wiki for finding content)
+4. **`search_wiki`** — Semantic search by meaning (falls back to keyword if embeddings unavailable)
 5. **`get_wiki_section`** — Read a specific section by key
 6. **`get_wiki_sections`** — Batch read multiple sections (max 20 at once)
 
 ### Writing
 
-7. **`create_section`** — Create a new section
-8. **`update_section`** — Update an existing section (provide only fields you want to change)
+7. **`create_section`** — Create a new section (embedding auto-generated)
+8. **`update_section`** — Update an existing section (embedding auto-regenerated, history auto-tracked)
 9. **`delete_section`** — Delete a section
+
+### Import/Export
+
+10. **`import_wiki`** — Import markdown files or directories into the database (embeddings auto-generated)
+11. **`export_wiki`** — Export wiki sections to markdown files
 
 ### Management
 
-10. **`get_backlinks`** — Find what sections link to a given section
-11. **`validate_wiki`** — Check for empty, orphaned, or unlinked sections
-12. **`get_section_history`** — View edit history
+12. **`get_backlinks`** — Find what sections link to a given section
+13. **`validate_wiki`** — Check for empty, orphaned, or unlinked sections
+14. **`get_section_history`** — View edit history
 
 ## Workflow
 
