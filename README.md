@@ -13,19 +13,26 @@ MCP server for wiki management backed by PostgreSQL. Replaces the file-based wik
 
 ## Quick Start
 
-### 1. Start the database
+### 1. Install dependencies
+
+```bash
+npm install
+npm run init  # Set up pre-commit hook for lint + format
+```
+
+### 2. Start the database
 
 ```bash
 docker-compose up -d
 ```
 
-### 2. Import existing markdown files
+### 3. Import existing markdown files
 
 ```bash
 WIKI_SOURCES=/ai/wiki,/home/dev/transAct/docs node scripts/import-wiki-to-db.js
 ```
 
-### 3. Start the MCP server
+### 4. Start the MCP server
 
 ```bash
 node src/index.js
