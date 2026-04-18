@@ -73,6 +73,7 @@ server.registerTool(
         .string()
         .optional()
         .describe('Filter by wiki instance (e.g., "user-wiki", "transact-wiki")'),
+      limit: z.number().optional().default(100).describe('Maximum sections to return (default 100)'),
     },
     outputSchema: {
       sections: z
@@ -89,11 +90,11 @@ server.registerTool(
     },
     annotations: readOnlyAnnotations,
   },
-  async ({ wikiId }) => {
+  async ({ wikiId, limit }) => {
     try {
       requestCounts.list_wiki++;
-      const sections = await db.listSections(wikiId || null);
-      logger.info('list_wiki', { wikiId, count: sections.length });
+      const sections = await db.listSections(wikiId || null, limit);
+      logger.info('list_wiki', { wikiId, limit, count: sections.length });
       return withContent({ sections, count: sections.length });
     } catch (err) {
       logger.error('list_wiki failed', { error: err.message });
@@ -115,6 +116,7 @@ server.registerTool(
           'Filter by parent topic (e.g., "Portage Backend", "Approval Workflow Deep Dive")',
         ),
       wikiId: z.string().optional().describe('Filter by wiki instance'),
+      limit: z.number().optional().default(100).describe('Maximum sections to return (default 100)'),
     },
     outputSchema: {
       groups: z
@@ -138,10 +140,10 @@ server.registerTool(
     },
     annotations: readOnlyAnnotations,
   },
-  async ({ topic, wikiId }) => {
+  async ({ topic, wikiId, limit }) => {
     try {
       requestCounts.browse_wiki++;
-      const sections = await db.browseSections(topic || null, wikiId || null);
+      const sections = await db.browseSections(topic || null, wikiId || null, limit);
 
       const byParent = {};
       for (const s of sections) {
@@ -156,7 +158,7 @@ server.registerTool(
       }
 
       const groups = Object.entries(byParent).map(([parent, secs]) => ({ parent, sections: secs }));
-      logger.info('browse_wiki', { topic, wikiId, count: sections.length });
+      logger.info('browse_wiki', { topic, wikiId, limit, count: sections.length });
       return withContent({ groups, count: sections.length });
     } catch (err) {
       logger.error('browse_wiki failed', { topic, wikiId, error: err.message });

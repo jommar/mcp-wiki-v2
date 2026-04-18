@@ -14,11 +14,11 @@ const pool = new Pool({
 /**
  * List all sections with optional wiki_id filter.
  */
-export async function listSections(wikiId = null) {
+export async function listSections(wikiId = null, limit = 100) {
   const query = wikiId
-    ? 'SELECT key, parent, title, metadata, LENGTH(content) as content_length FROM wiki_sections WHERE wiki_id = $1 ORDER BY key'
-    : 'SELECT key, wiki_id, parent, title, metadata, LENGTH(content) as content_length FROM wiki_sections ORDER BY wiki_id, key';
-  const { rows } = await pool.query(query, wikiId ? [wikiId] : []);
+    ? 'SELECT key, wiki_id, parent, title, metadata, LENGTH(content) as content_length FROM wiki_sections WHERE wiki_id = $1 ORDER BY key LIMIT $2'
+    : 'SELECT key, wiki_id, parent, title, metadata, LENGTH(content) as content_length FROM wiki_sections ORDER BY wiki_id, key LIMIT $1';
+  const { rows } = await pool.query(query, wikiId ? [wikiId, limit] : [limit]);
   return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
@@ -32,7 +32,7 @@ export async function listSections(wikiId = null) {
 /**
  * Browse sections by parent topic.
  */
-export async function browseSections(topic, wikiId = null) {
+export async function browseSections(topic, wikiId = null, limit = 100) {
   let query = `
     SELECT key, wiki_id, parent, title, metadata->>'depth' as depth, metadata->'breadcrumbs' as breadcrumbs
     FROM wiki_sections
@@ -55,7 +55,8 @@ export async function browseSections(topic, wikiId = null) {
   if (conditions.length) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
-  query += ' ORDER BY parent, key';
+  query += ' ORDER BY parent, key LIMIT $' + (params.length + 1);
+  params.push(limit);
 
   const { rows } = await pool.query(query, params);
   return rows.map((r) => ({
