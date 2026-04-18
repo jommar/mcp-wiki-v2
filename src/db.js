@@ -347,8 +347,8 @@ export async function createSection({ wikiId, key, title, content, parent = null
  */
 export async function updateSection({ wikiId, key, content, title, parent, tags, reason }) {
   const updates = [];
-  const params = [wikiId, key];
-  let paramIdx = 3;
+  const params = [];
+  let paramIdx = 1;
 
   if (content !== undefined) { updates.push(`content = $${paramIdx++}`); params.push(content); }
   if (title !== undefined) { updates.push(`title = $${paramIdx++}`); params.push(title); }
