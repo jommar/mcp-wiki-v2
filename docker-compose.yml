@@ -1,0 +1,22 @@
+services:
+  wiki-db:
+    image: pgvector/pgvector:pg16
+    container_name: wiki-v2-db
+    environment:
+      POSTGRES_USER: wiki
+      POSTGRES_PASSWORD: wiki
+      POSTGRES_DB: wiki
+    ports:
+      - "5433:5432"
+    volumes:
+      - wiki-data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wiki -d wiki"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  wiki-data:
