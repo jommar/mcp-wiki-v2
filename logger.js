@@ -81,16 +81,19 @@ function purgeOldLogs() {
 purgeOldLogs();
 
 // Purge daily at midnight + check for log rotation
-const maintenanceInterval = setInterval(() => {
-  purgeOldLogs();
-  // Force stream rotation check on next write
-  const today = dateStamp();
-  if (currentDate !== today) {
-    if (currentStream) currentStream.end();
-    currentStream = null;
-    currentDate = null;
-  }
-}, 60 * 60 * 1000); // every hour is enough — rotation happens lazily on next write
+const maintenanceInterval = setInterval(
+  () => {
+    purgeOldLogs();
+    // Force stream rotation check on next write
+    const today = dateStamp();
+    if (currentDate !== today) {
+      if (currentStream) currentStream.end();
+      currentStream = null;
+      currentDate = null;
+    }
+  },
+  60 * 60 * 1000,
+); // every hour is enough — rotation happens lazily on next write
 
 maintenanceInterval.unref();
 

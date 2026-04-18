@@ -55,44 +55,44 @@ Or configure your MCP client:
 
 ### Read Tools
 
-| Tool | Description |
-|------|-------------|
-| `list_wiki` | List all sections, optionally filtered by `wikiId` |
-| `browse_wiki` | Browse sections grouped by parent topic |
-| `search_wiki` | Semantic search by meaning (falls back to keyword if embeddings unavailable) |
-| `get_wiki_section` | Get a single section with content pagination |
-| `get_wiki_sections` | Batch retrieve multiple sections |
-| `get_wiki_info` | Get wiki instance metadata and section counts |
+| Tool                | Description                                                                  |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `list_wiki`         | List all sections, optionally filtered by `wikiId`                           |
+| `browse_wiki`       | Browse sections grouped by parent topic                                      |
+| `search_wiki`       | Semantic search by meaning (falls back to keyword if embeddings unavailable) |
+| `get_wiki_section`  | Get a single section with content pagination                                 |
+| `get_wiki_sections` | Batch retrieve multiple sections                                             |
+| `get_wiki_info`     | Get wiki instance metadata and section counts                                |
 
 ### Write Tools
 
-| Tool | Description |
-|------|-------------|
-| `create_section` | Create a new wiki section (embedding auto-generated) |
+| Tool             | Description                                                                   |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `create_section` | Create a new wiki section (embedding auto-generated)                          |
 | `update_section` | Update an existing section (embedding auto-regenerated, history auto-tracked) |
-| `delete_section` | Delete a section and its backlinks |
+| `delete_section` | Delete a section and its backlinks                                            |
 
 ### Import/Export Tools
 
-| Tool | Description |
-|------|-------------|
+| Tool          | Description                                                      |
+| ------------- | ---------------------------------------------------------------- |
 | `import_wiki` | Import markdown files or directories (embeddings auto-generated) |
-| `export_wiki` | Export wiki sections to markdown files |
+| `export_wiki` | Export wiki sections to markdown files                           |
 
 ### Management Tools
 
-| Tool | Description |
-|------|-------------|
-| `get_backlinks` | Find sections that link to a given section |
-| `validate_wiki` | Find empty, orphaned, and unlinked sections |
-| `get_section_history` | View edit history for a section |
+| Tool                  | Description                                 |
+| --------------------- | ------------------------------------------- |
+| `get_backlinks`       | Find sections that link to a given section  |
+| `validate_wiki`       | Find empty, orphaned, and unlinked sections |
+| `get_section_history` | View edit history for a section             |
 
 ## Scripts
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/import-wiki-to-db.js` | Import markdown files → PostgreSQL |
-| `scripts/export-wiki-to-md.js` | Export PostgreSQL → markdown files |
+| Script                           | Purpose                                        |
+| -------------------------------- | ---------------------------------------------- |
+| `scripts/import-wiki-to-db.js`   | Import markdown files → PostgreSQL             |
+| `scripts/export-wiki-to-md.js`   | Export PostgreSQL → markdown files             |
 | `scripts/generate-embeddings.js` | Generate vector embeddings for semantic search |
 
 ### Import
@@ -131,11 +131,11 @@ Uses `@xenova/transformers` with `all-MiniLM-L6-v2` (384-dim, quantized) — run
 
 ## Database Schema
 
-| Table | Purpose |
-|-------|---------|
-| `wiki_sections` | Main content table with FTS and vector columns |
-| `section_links` | Backlinks between sections (auto-populated from `[[wiki-key]]` patterns) |
-| `section_history` | Version history (auto-populated on updates) |
+| Table             | Purpose                                                                  |
+| ----------------- | ------------------------------------------------------------------------ |
+| `wiki_sections`   | Main content table with FTS and vector columns                           |
+| `section_links`   | Backlinks between sections (auto-populated from `[[wiki-key]]` patterns) |
+| `section_history` | Version history (auto-populated on updates)                              |
 
 ### Key Features
 
@@ -156,13 +156,13 @@ V1 (`/home/dev/mcp/wiki/`) uses file-based parsing. V2 uses PostgreSQL. Both can
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DB_HOST` | `localhost` | PostgreSQL host |
-| `DB_PORT` | `5433` | PostgreSQL port |
-| `DB_USER` | `wiki` | Database user |
-| `DB_PASSWORD` | `wiki` | Database password |
-| `DB_NAME` | `wiki` | Database name |
-| `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
-| `LOG_DIR` | `logs` | Log directory |
+| Variable       | Default                 | Description                               |
+| -------------- | ----------------------- | ----------------------------------------- |
+| `DB_HOST`      | `localhost`             | PostgreSQL host                           |
+| `DB_PORT`      | `5433`                  | PostgreSQL port                           |
+| `DB_USER`      | `wiki`                  | Database user                             |
+| `DB_PASSWORD`  | `wiki`                  | Database password                         |
+| `DB_NAME`      | `wiki`                  | Database name                             |
+| `LOG_LEVEL`    | `info`                  | Log level (debug, info, warn, error)      |
+| `LOG_DIR`      | `logs`                  | Log directory                             |
 | `WIKI_SOURCES` | _(required for import)_ | Comma-separated paths to markdown sources |

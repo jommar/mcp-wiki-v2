@@ -38,9 +38,10 @@ function levenshtein(a, b) {
 
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
     }
   }
 
@@ -62,7 +63,9 @@ function resolveSafePath(sourcePath) {
     return { resolved, type: 'file' };
   } catch (err) {
     if (err.message.startsWith('Invalid file extension')) throw err;
-    throw new Error(`Wiki source not found or not readable at "${resolved}": ${err.message}`);
+    throw new Error(`Wiki source not found or not readable at "${resolved}": ${err.message}`, {
+      cause: err,
+    });
   }
 }
 
@@ -151,8 +154,8 @@ export class WikiParser {
   #legacyAliasToCanonical = new Map();
   #legacyAmbiguous = new Set();
   #legacyWarningShown = new Set();
-  #contentIndex = {};   // key -> lowercase content string for fast search
-  #relatedMap = {};     // key -> array of related keys
+  #contentIndex = {}; // key -> lowercase content string for fast search
+  #relatedMap = {}; // key -> array of related keys
 
   /**
    * @param {string} sourcePath
@@ -205,7 +208,9 @@ export class WikiParser {
     for (const filePath of filePaths) {
       const stat = fs.statSync(filePath);
       if (stat.size > MAX_FILE_SIZE) {
-        throw new Error(`Wiki file exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit (${(stat.size / 1024 / 1024).toFixed(1)}MB): ${filePath}`);
+        throw new Error(
+          `Wiki file exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit (${(stat.size / 1024 / 1024).toFixed(1)}MB): ${filePath}`,
+        );
       }
 
       const rawMarkdown = fs.readFileSync(filePath, 'utf8');
@@ -227,7 +232,9 @@ export class WikiParser {
     for (const filePath of filePaths) {
       const fileStat = await fs.promises.stat(filePath);
       if (fileStat.size > MAX_FILE_SIZE) {
-        throw new Error(`Wiki file exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit (${(fileStat.size / 1024 / 1024).toFixed(1)}MB): ${filePath}`);
+        throw new Error(
+          `Wiki file exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit (${(fileStat.size / 1024 / 1024).toFixed(1)}MB): ${filePath}`,
+        );
       }
 
       const rawMarkdown = await fs.promises.readFile(filePath, 'utf8');
@@ -261,7 +268,9 @@ export class WikiParser {
       return documents;
     } catch (err) {
       if (err.message.includes('exceeds')) throw err;
-      throw new Error(`Could not load wiki at "${this.#sourcePath}": ${err.message}`);
+      throw new Error(`Could not load wiki at "${this.#sourcePath}": ${err.message}`, {
+        cause: err,
+      });
     }
   }
 
@@ -284,7 +293,9 @@ export class WikiParser {
       return documents;
     } catch (err) {
       if (err.message.includes('exceeds')) throw err;
-      throw new Error(`Could not load wiki at "${this.#sourcePath}": ${err.message}`);
+      throw new Error(`Could not load wiki at "${this.#sourcePath}": ${err.message}`, {
+        cause: err,
+      });
     }
   }
 
@@ -340,17 +351,21 @@ export class WikiParser {
 
       const parentHeadingSlug = headingStack.length ? headingStack.at(-1).runningSlug : '';
       const baseHeadingSlug = parentHeadingSlug ? `${parentHeadingSlug}-${slugToUse}` : slugToUse;
-      const prefixedBaseSlug = document.fileSlug ? `${document.fileSlug}-${baseHeadingSlug}` : baseHeadingSlug;
-
-      legacySlugCounts[baseHeadingSlug] = (legacySlugCounts[baseHeadingSlug] || 0) + 1;
-      const legacyKey = legacySlugCounts[baseHeadingSlug] > 1
-        ? `${baseHeadingSlug}-${legacySlugCounts[baseHeadingSlug] - 1}`
+      const prefixedBaseSlug = document.fileSlug
+        ? `${document.fileSlug}-${baseHeadingSlug}`
         : baseHeadingSlug;
 
+      legacySlugCounts[baseHeadingSlug] = (legacySlugCounts[baseHeadingSlug] || 0) + 1;
+      const legacyKey =
+        legacySlugCounts[baseHeadingSlug] > 1
+          ? `${baseHeadingSlug}-${legacySlugCounts[baseHeadingSlug] - 1}`
+          : baseHeadingSlug;
+
       slugCounts[prefixedBaseSlug] = (slugCounts[prefixedBaseSlug] || 0) + 1;
-      const currentKey = slugCounts[prefixedBaseSlug] > 1
-        ? `${prefixedBaseSlug}-${slugCounts[prefixedBaseSlug] - 1}`
-        : prefixedBaseSlug;
+      const currentKey =
+        slugCounts[prefixedBaseSlug] > 1
+          ? `${prefixedBaseSlug}-${slugCounts[prefixedBaseSlug] - 1}`
+          : prefixedBaseSlug;
 
       this.#registerLegacyAlias(legacyKey, currentKey);
 
@@ -378,14 +393,20 @@ export class WikiParser {
       };
 
       headingOrder.push({ key: currentKey, text: token.text, depth: token.depth });
-      headingStack.push({ slug: headingSlug, text: token.text, depth: token.depth, runningSlug: baseHeadingSlug });
+      headingStack.push({
+        slug: headingSlug,
+        text: token.text,
+        depth: token.depth,
+        runningSlug: baseHeadingSlug,
+      });
     }
 
     this.#assignPositions(document, headingOrder);
 
     for (let i = 0; i < headingOrder.length; i++) {
       const currentKey = headingOrder[i].key;
-      const nextStart = i + 1 < headingOrder.length ? this.#index[headingOrder[i + 1].key]?.start : undefined;
+      const nextStart =
+        i + 1 < headingOrder.length ? this.#index[headingOrder[i + 1].key]?.start : undefined;
       this.#index[currentKey].end = nextStart ?? document.rawMarkdown.length;
     }
   }
@@ -400,9 +421,9 @@ export class WikiParser {
     const legacyAmbiguous = new Set();
 
     // Temporarily swap index and alias maps so #buildIndexForDocument writes into locals
-    const prevIndex = this.#index;
-    const prevAlias = this.#legacyAliasToCanonical;
-    const prevAmbiguous = this.#legacyAmbiguous;
+    const _prevIndex = this.#index;
+    const _prevAlias = this.#legacyAliasToCanonical;
+    const _prevAmbiguous = this.#legacyAmbiguous;
     this.#index = index;
     this.#legacyAliasToCanonical = legacyAliasToCanonical;
     this.#legacyAmbiguous = legacyAmbiguous;
@@ -423,10 +444,13 @@ export class WikiParser {
     this.#contentIndex = contentIndex;
     this.#relatedMap = relatedMap;
 
-    logger.debug('Built index', { sections: Object.keys(index).length, files: this.#documents.length });
+    logger.debug('Built index', {
+      sections: Object.keys(index).length,
+      files: this.#documents.length,
+    });
   }
 
-  async #buildIndexAsync() {
+  #buildIndexAsync() {
     if (!this.#documents.length) return;
 
     const index = {};
@@ -435,9 +459,9 @@ export class WikiParser {
     const legacyAliasToCanonical = new Map();
     const legacyAmbiguous = new Set();
 
-    const prevIndex = this.#index;
-    const prevAlias = this.#legacyAliasToCanonical;
-    const prevAmbiguous = this.#legacyAmbiguous;
+    const _prevIndex = this.#index;
+    const _prevAlias = this.#legacyAliasToCanonical;
+    const _prevAmbiguous = this.#legacyAmbiguous;
     this.#index = index;
     this.#legacyAliasToCanonical = legacyAliasToCanonical;
     this.#legacyAmbiguous = legacyAmbiguous;
@@ -456,7 +480,10 @@ export class WikiParser {
     this.#contentIndex = contentIndex;
     this.#relatedMap = relatedMap;
 
-    logger.debug('Built index (async)', { sections: Object.keys(index).length, files: this.#documents.length });
+    logger.debug('Built index (async)', {
+      sections: Object.keys(index).length,
+      files: this.#documents.length,
+    });
   }
 
   #assignPositions(document, headingOrder) {
@@ -473,7 +500,11 @@ export class WikiParser {
         this.#index[h.key].start = match.index;
         scanPos = match.index + match[0].length;
       } else {
-        logger.warn('Heading not found in raw markdown', { key: h.key, text: h.text, filePath: document.filePath });
+        logger.warn('Heading not found in raw markdown', {
+          key: h.key,
+          text: h.text,
+          filePath: document.filePath,
+        });
       }
     });
   }
@@ -551,7 +582,10 @@ export class WikiParser {
 
         this.#dirWatchers.set(dirPath, watcher);
       } catch (err) {
-        logger.warn('Could not start directory watcher, retrying in 1s', { dirPath, error: err.message });
+        logger.warn('Could not start directory watcher, retrying in 1s', {
+          dirPath,
+          error: err.message,
+        });
         clearTimeout(this.#watchDebounce);
         this.#watchDebounce = setTimeout(() => this.#refreshDirectoryWatchers(), 1000);
       }
@@ -616,11 +650,18 @@ export class WikiParser {
     if (!query) return keys;
 
     if (fuzzy) {
-      const queryWords = slugify(query).split('-').filter((w) => w.length >= 2);
+      const queryWords = slugify(query)
+        .split('-')
+        .filter((w) => w.length >= 2);
       const scored = keys.map((k) => {
         const keyWords = k.split('-').filter((w) => w.length >= 2);
-        const legacyWords = (this.#index[k].legacyKey || '').split('-').filter((w) => w.length >= 2);
-        const titleWords = this.#index[k].title.toLowerCase().split(/\s+/).filter((w) => w.length >= 2);
+        const legacyWords = (this.#index[k].legacyKey || '')
+          .split('-')
+          .filter((w) => w.length >= 2);
+        const titleWords = this.#index[k].title
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((w) => w.length >= 2);
         const fileWords = slugify(this.#index[k].fileSlug || this.#index[k].file || '')
           .split('-')
           .filter((w) => w.length >= 2);
@@ -641,7 +682,11 @@ export class WikiParser {
           }
         }
 
-        return { key: k, score: matchedWords > 0 ? totalScore / matchedWords : Infinity, matchedWords };
+        return {
+          key: k,
+          score: matchedWords > 0 ? totalScore / matchedWords : Infinity,
+          matchedWords,
+        };
       });
 
       return scored
@@ -679,7 +724,9 @@ export class WikiParser {
       .filter((r) => r.priority >= 0)
       .sort((a, b) => a.priority - b.priority)
       .slice(0, limit)
-      .map((r) => detailed ? { key: r.key, headerMatch: r.headerMatch, contentMatch: r.contentMatch } : r.key);
+      .map((r) =>
+        detailed ? { key: r.key, headerMatch: r.headerMatch, contentMatch: r.contentMatch } : r.key,
+      );
   }
 
   /**
@@ -714,10 +761,9 @@ export class WikiParser {
       const headingLineEnd = sourceDocument.rawMarkdown.indexOf('\n', meta.start);
       const contentStart = headingLineEnd === -1 ? meta.end : headingLineEnd + 1;
       let content = sourceDocument.rawMarkdown.slice(contentStart, meta.end).trim();
-      
+
       // Clean custom anchor syntax from content (e.g., "{#custom-anchor}")
       content = content.replace(/\s*\{#[^}]+\}/g, '');
-      
       return { ...meta, content };
     } catch (err) {
       logger.error(`Error reading section '${key}'`, { error: err.message });
@@ -730,11 +776,10 @@ export class WikiParser {
    * @returns {{ key: string, title?: string, parent?: string, breadcrumbs?: string[], depth?: number, content?: string, error?: string }[]}
    */
   getSections(keys) {
-    return keys
-      .map((key) => {
-        const section = this.getSection(key);
-        return section ? { key, ...section } : { key, error: `Section '${key}' not found` };
-      });
+    return keys.map((key) => {
+      const section = this.getSection(key);
+      return section ? { key, ...section } : { key, error: `Section '${key}' not found` };
+    });
   }
 
   /** @returns {string[]} */
@@ -805,25 +850,30 @@ export class WikiParser {
    * Get the absolute path to the wiki source.
    * @returns {string}
    */
-  get sourcePath() { return this.#sourcePath; }
+  get sourcePath() {
+    return this.#sourcePath;
+  }
 
   /**
    * Get the source type — 'file' or 'directory'.
    * @returns {string}
    */
-  get sourceType() { return this.#sourceType; }
+  get sourceType() {
+    return this.#sourceType;
+  }
 
   /**
    * Get the number of markdown files loaded.
    * @returns {number}
    */
-  get documentCount() { return this.#documents.length; }
+  get documentCount() {
+    return this.#documents.length;
+  }
 
   reload() {
     // Build into local vars first, then swap atomically so concurrent
     // readers never see an empty/partial index.
     const newDocuments = this.#loadMarkdown();
-    const prevDocuments = this.#documents;
     this.#documents = newDocuments;
     this.#buildIndex();
   }

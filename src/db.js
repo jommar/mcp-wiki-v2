@@ -19,7 +19,7 @@ export async function listSections(wikiId = null) {
     ? 'SELECT key, parent, title, metadata, LENGTH(content) as content_length FROM wiki_sections WHERE wiki_id = $1 ORDER BY key'
     : 'SELECT key, wiki_id, parent, title, metadata, LENGTH(content) as content_length FROM wiki_sections ORDER BY wiki_id, key';
   const { rows } = await pool.query(query, wikiId ? [wikiId] : []);
-  return rows.map(r => ({
+  return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
     parent: r.parent || 'Root',
@@ -58,7 +58,7 @@ export async function browseSections(topic, wikiId = null) {
   query += ' ORDER BY parent, key';
 
   const { rows } = await pool.query(query, params);
-  return rows.map(r => ({
+  return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
     parent: r.parent || 'Root',
@@ -93,7 +93,7 @@ async function searchSemantic(query, { wikiId, limit }) {
     params.push(limit);
 
     const { rows } = await pool.query(searchQuery, params);
-    return rows.map(r => ({
+    return rows.map((r) => ({
       key: r.key,
       wikiId: r.wiki_id,
       parent: r.parent || 'Root',
@@ -122,7 +122,7 @@ export async function searchSections(query, { wikiId = null, fuzzy = false, limi
   const semanticResults = await searchSemantic(query, { wikiId, limit });
 
   // If we got results with meaningful similarity, use them
-  if (semanticResults.length > 0 && semanticResults.some(r => r.rank > 0.1)) {
+  if (semanticResults.length > 0 && semanticResults.some((r) => r.rank > 0.1)) {
     return semanticResults;
   }
 
@@ -136,7 +136,12 @@ export async function searchSections(query, { wikiId = null, fuzzy = false, limi
   }
 
   // Build tsquery from user input
-  const searchTerms = query.toLowerCase().split(/\s+/).filter(Boolean).map(t => t + ':*').join(' & ');
+  const searchTerms = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((t) => t + ':*')
+    .join(' & ');
 
   const searchQuery = `
     SELECT key, wiki_id, parent, title, metadata->'breadcrumbs' as breadcrumbs,
@@ -150,7 +155,7 @@ export async function searchSections(query, { wikiId = null, fuzzy = false, limi
   params.push(searchTerms, limit);
 
   const { rows } = await pool.query(searchQuery, params);
-  return rows.map(r => ({
+  return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
     parent: r.parent || 'Root',
@@ -192,7 +197,7 @@ async function searchFuzzy(query, { wikiId, limit }) {
   params.push(query, limit);
 
   const { rows } = await pool.query(searchQuery, params);
-  return rows.map(r => ({
+  return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
     parent: r.parent || 'Root',
@@ -268,7 +273,7 @@ export async function getSections(keys, { wikiId = null, truncateLimit = 8000 } 
   `;
 
   const { rows } = await pool.query(query, params);
-  return rows.map(r => {
+  return rows.map((r) => {
     const truncated = r.total_length > truncateLimit;
     return {
       key: r.key,
@@ -291,15 +296,15 @@ export async function getWikiInfo(wikiId = null) {
   if (wikiId) {
     const { rows } = await pool.query(
       'SELECT COUNT(*) as section_count FROM wiki_sections WHERE wiki_id = $1',
-      [wikiId]
+      [wikiId],
     );
     return { wikiId, sectionCount: parseInt(rows[0].section_count) };
   }
 
   const { rows } = await pool.query(
-    'SELECT wiki_id, COUNT(*) as section_count FROM wiki_sections GROUP BY wiki_id ORDER BY wiki_id'
+    'SELECT wiki_id, COUNT(*) as section_count FROM wiki_sections GROUP BY wiki_id ORDER BY wiki_id',
   );
-  return rows.map(r => ({
+  return rows.map((r) => ({
     wikiId: r.wiki_id,
     sectionCount: parseInt(r.section_count),
   }));
@@ -325,7 +330,7 @@ export async function getBacklinks(key, wikiId = null) {
   `;
 
   const { rows } = await pool.query(query, params);
-  return rows.map(r => ({
+  return rows.map((r) => ({
     key: r.from_key,
     wikiId: r.from_wiki_id,
     title: r.from_title,
@@ -347,14 +352,18 @@ export async function validateWiki(wikiId = null) {
   const results = {};
 
   // Empty sections
-  const { rows: empty } = await pool.query(`
+  const { rows: empty } = await pool.query(
+    `
     SELECT key, title FROM wiki_sections
     ${whereClause} ${whereClause ? 'AND' : 'WHERE'} content = '' OR content IS NULL
-  `, params);
-  results.emptySections = empty.map(r => ({ key: r.key, title: r.title }));
+  `,
+    params,
+  );
+  results.emptySections = empty.map((r) => ({ key: r.key, title: r.title }));
 
   // Orphaned sections (no parent, no children, no backlinks)
-  const { rows: orphans } = await pool.query(`
+  const { rows: orphans } = await pool.query(
+    `
     SELECT s.key, s.title, s.parent
     FROM wiki_sections s
     ${whereClause} ${whereClause ? 'AND' : 'WHERE'} (
@@ -362,19 +371,24 @@ export async function validateWiki(wikiId = null) {
       AND NOT EXISTS (SELECT 1 FROM wiki_sections c WHERE c.parent = s.title AND c.wiki_id = s.wiki_id)
       AND NOT EXISTS (SELECT 1 FROM section_links sl WHERE sl.to_key = s.key AND sl.to_wiki_id = s.wiki_id)
     )
-  `, params);
-  results.orphanedSections = orphans.map(r => ({ key: r.key, title: r.title }));
+  `,
+    params,
+  );
+  results.orphanedSections = orphans.map((r) => ({ key: r.key, title: r.title }));
 
   // Sections with no backlinks (not linked from anywhere)
-  const { rows: unlinked } = await pool.query(`
+  const { rows: unlinked } = await pool.query(
+    `
     SELECT s.key, s.title
     FROM wiki_sections s
     ${whereClause} ${whereClause ? 'AND' : 'WHERE'} NOT EXISTS (
       SELECT 1 FROM section_links sl WHERE sl.to_key = s.key AND sl.to_wiki_id = s.wiki_id
     )
     AND s.parent IS NOT NULL
-  `, params);
-  results.unlinkedSections = unlinked.map(r => ({ key: r.key, title: r.title }));
+  `,
+    params,
+  );
+  results.unlinkedSections = unlinked.map((r) => ({ key: r.key, title: r.title }));
 
   return results;
 }
@@ -386,28 +400,31 @@ export async function createSection({ wikiId, key, title, content, parent = null
   // Check for existing section first to give a clear error
   const { rows: existing } = await pool.query(
     'SELECT key FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
-    [wikiId, key]
+    [wikiId, key],
   );
   if (existing.length > 0) {
     return { exists: true };
   }
 
-  const { rows } = await pool.query(`
+  const { rows } = await pool.query(
+    `
     INSERT INTO wiki_sections (wiki_id, key, parent, title, content, tags, status, metadata)
     VALUES ($1, $2, $3, $4, $5, $6::varchar(100)[], 'active', $7)
     RETURNING id, key, wiki_id, title, parent
-  `, [wikiId, key, parent, title, content, tags, JSON.stringify({ breadcrumbs: [] })]);
+  `,
+    [wikiId, key, parent, title, content, tags, JSON.stringify({ breadcrumbs: [] })],
+  );
 
   // Generate and store embedding
   if (rows.length > 0) {
     try {
       const embedding = await getEmbedding(`${title}\n${content.slice(0, 2000)}`);
-        await pool.query(
-          'UPDATE wiki_sections SET embedding = $1 WHERE id = $2',
-          [JSON.stringify(embedding), rows[0].id]
-        );
-      } catch (err) {
-        logger.warn('Failed to generate embedding on create', { key, error: err.message });
+      await pool.query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
+        JSON.stringify(embedding),
+        rows[0].id,
+      ]);
+    } catch (err) {
+      logger.warn('Failed to generate embedding on create', { key, error: err.message });
     }
   }
 
@@ -421,7 +438,7 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
   // Check existence first
   const { rows: existing } = await pool.query(
     'SELECT key, title, content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
-    [wikiId, key]
+    [wikiId, key],
   );
   if (existing.length === 0) {
     return { notFound: true };
@@ -431,28 +448,46 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
   const params = [];
   let paramIdx = 1;
 
-  if (content !== undefined) { updates.push(`content = $${paramIdx++}`); params.push(content); }
-  if (title !== undefined) { updates.push(`title = $${paramIdx++}`); params.push(title); }
-  if (parent !== undefined) { updates.push(`parent = $${paramIdx++}`); params.push(parent || null); }
-  if (tags !== undefined) { updates.push(`tags = $${paramIdx++}::varchar(100)[]`); params.push(tags); }
+  if (content !== undefined) {
+    updates.push(`content = $${paramIdx++}`);
+    params.push(content);
+  }
+  if (title !== undefined) {
+    updates.push(`title = $${paramIdx++}`);
+    params.push(title);
+  }
+  if (parent !== undefined) {
+    updates.push(`parent = $${paramIdx++}`);
+    params.push(parent || null);
+  }
+  if (tags !== undefined) {
+    updates.push(`tags = $${paramIdx++}::varchar(100)[]`);
+    params.push(tags);
+  }
 
   if (updates.length === 0) return { noChanges: true };
 
   updates.push('updated_at = NOW()');
   params.push(wikiId, key);
 
-  const { rows } = await pool.query(`
+  const { rows } = await pool.query(
+    `
     UPDATE wiki_sections SET ${updates.join(', ')}
     WHERE wiki_id = $${paramIdx} AND key = $${paramIdx + 1}
     RETURNING id, key, wiki_id, title, parent
-  `, params);
+  `,
+    params,
+  );
 
   // Log history if content changed
   if (content !== undefined && rows.length > 0) {
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO section_history (wiki_id, section_key, content_after, change_reason)
       VALUES ($1, $2, $3, $4)
-    `, [wikiId, key, content, reason || 'update']);
+    `,
+      [wikiId, key, content, reason || 'update'],
+    );
   }
 
   // Regenerate embedding if content or title changed
@@ -461,10 +496,10 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
       const newTitle = title !== undefined ? title : existing[0].title;
       const newContent = content !== undefined ? content : existing[0].content;
       const embedding = await getEmbedding(`${newTitle}\n${newContent.slice(0, 2000)}`);
-      await pool.query(
-        'UPDATE wiki_sections SET embedding = $1 WHERE id = $2',
-        [JSON.stringify(embedding), rows[0].id]
-      );
+      await pool.query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
+        JSON.stringify(embedding),
+        rows[0].id,
+      ]);
     } catch (err) {
       logger.warn('Failed to regenerate embedding on update', { key, error: err.message });
     }
@@ -477,15 +512,18 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
  * Delete a section.
  */
 export async function deleteSection(wikiId, key) {
-  const { rows } = await pool.query(`
+  const { rows } = await pool.query(
+    `
     DELETE FROM wiki_sections WHERE wiki_id = $1 AND key = $2
     RETURNING key, wiki_id, title
-  `, [wikiId, key]);
+  `,
+    [wikiId, key],
+  );
 
   // Also delete backlinks
   await pool.query(
     'DELETE FROM section_links WHERE (from_wiki_id = $1 AND from_key = $2) OR (to_wiki_id = $1 AND to_key = $2)',
-    [wikiId, key]
+    [wikiId, key],
   );
 
   return rows[0] || null;
@@ -495,13 +533,16 @@ export async function deleteSection(wikiId, key) {
  * Get section history.
  */
 export async function getSectionHistory(wikiId, key, limit = 10) {
-  const { rows } = await pool.query(`
+  const { rows } = await pool.query(
+    `
     SELECT content_before, content_after, changed_at, change_reason
     FROM section_history
     WHERE wiki_id = $1 AND section_key = $2
     ORDER BY changed_at DESC
     LIMIT $3
-  `, [wikiId, key, limit]);
+  `,
+    [wikiId, key, limit],
+  );
 
   return rows;
 }
@@ -517,16 +558,19 @@ export async function findSimilar(query, wikiId = null, maxResults = 5) {
     params.push(wikiId);
   }
 
-  const { rows } = await pool.query(`
+  const { rows } = await pool.query(
+    `
     SELECT key, wiki_id, title,
       LEVENSHTEIN(key, $${params.length + 1}) as distance
     FROM wiki_sections
     ${whereClause} ${whereClause ? 'AND' : 'WHERE'} LEVENSHTEIN(key, $${params.length + 1}) < LENGTH($${params.length + 1})
     ORDER BY distance
     LIMIT $${params.length + 2}
-  `, [...params, query, maxResults]);
+  `,
+    [...params, query, maxResults],
+  );
 
-  return rows.map(r => ({ key: r.key, wikiId: r.wiki_id, title: r.title, distance: r.distance }));
+  return rows.map((r) => ({ key: r.key, wikiId: r.wiki_id, title: r.title, distance: r.distance }));
 }
 
 export { pool };

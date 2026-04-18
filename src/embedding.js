@@ -10,11 +10,9 @@ let extractor = null;
 async function getExtractor() {
   if (!extractor) {
     logger.info('Loading embedding model (all-MiniLM-L6-v2)...');
-    extractor = await pipeline(
-      'feature-extraction',
-      'Xenova/all-MiniLM-L6-v2',
-      { quantized: true }
-    );
+    extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
+      quantized: true,
+    });
     logger.info('Embedding model loaded');
   }
   return extractor;

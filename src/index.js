@@ -66,16 +66,24 @@ const sectionRefSchema = {
 server.registerTool(
   'list_wiki',
   {
-    description: 'List all available wiki section keys. Use browse_wiki instead for topic-filtered results.',
+    description:
+      'List all available wiki section keys. Use browse_wiki instead for topic-filtered results.',
     inputSchema: {
-      wikiId: z.string().optional().describe('Filter by wiki instance (e.g., "user-wiki", "transact-wiki")'),
+      wikiId: z
+        .string()
+        .optional()
+        .describe('Filter by wiki instance (e.g., "user-wiki", "transact-wiki")'),
     },
     outputSchema: {
-      sections: z.array(z.object({
-        ...sectionRefSchema,
-        wikiId: z.string().describe('Wiki instance ID'),
-        contentLength: z.number().describe('Content length in characters'),
-      })).describe('All wiki sections'),
+      sections: z
+        .array(
+          z.object({
+            ...sectionRefSchema,
+            wikiId: z.string().describe('Wiki instance ID'),
+            contentLength: z.number().describe('Content length in characters'),
+          }),
+        )
+        .describe('All wiki sections'),
       count: z.number().describe('Total number of sections'),
       error: z.string().optional().describe('Error message if request failed'),
     },
@@ -91,28 +99,40 @@ server.registerTool(
       logger.error('list_wiki failed', { error: err.message });
       return withContent({ sections: [], count: 0, error: err.message });
     }
-  }
+  },
 );
 
 server.registerTool(
   'browse_wiki',
   {
-    description: 'Browse wiki sections by topic/parent. Returns section keys and titles without full content.',
+    description:
+      'Browse wiki sections by topic/parent. Returns section keys and titles without full content.',
     inputSchema: {
-      topic: z.string().optional().describe('Filter by parent topic (e.g., "Portage Backend", "Approval Workflow Deep Dive")'),
+      topic: z
+        .string()
+        .optional()
+        .describe(
+          'Filter by parent topic (e.g., "Portage Backend", "Approval Workflow Deep Dive")',
+        ),
       wikiId: z.string().optional().describe('Filter by wiki instance'),
     },
     outputSchema: {
-      groups: z.array(z.object({
-        parent: z.string().describe('Parent topic name'),
-        sections: z.array(z.object({
-          key: z.string().describe('Canonical slug key'),
-          wikiId: z.string().describe('Wiki instance ID'),
-          title: z.string().describe('Display title'),
-          depth: z.number().describe('Heading depth (2 = H2, 3 = H3, etc.)'),
-          breadcrumbs: z.array(z.string()).describe('Heading hierarchy from root to parent'),
-        })),
-      })).describe('Sections grouped by parent topic'),
+      groups: z
+        .array(
+          z.object({
+            parent: z.string().describe('Parent topic name'),
+            sections: z.array(
+              z.object({
+                key: z.string().describe('Canonical slug key'),
+                wikiId: z.string().describe('Wiki instance ID'),
+                title: z.string().describe('Display title'),
+                depth: z.number().describe('Heading depth (2 = H2, 3 = H3, etc.)'),
+                breadcrumbs: z.array(z.string()).describe('Heading hierarchy from root to parent'),
+              }),
+            ),
+          }),
+        )
+        .describe('Sections grouped by parent topic'),
       count: z.number().describe('Total number of matching sections'),
       error: z.string().optional().describe('Error message if request failed'),
     },
@@ -126,7 +146,13 @@ server.registerTool(
       const byParent = {};
       for (const s of sections) {
         if (!byParent[s.parent]) byParent[s.parent] = [];
-        byParent[s.parent].push({ key: s.key, wikiId: s.wikiId, title: s.title, depth: s.depth, breadcrumbs: s.breadcrumbs });
+        byParent[s.parent].push({
+          key: s.key,
+          wikiId: s.wikiId,
+          title: s.title,
+          depth: s.depth,
+          breadcrumbs: s.breadcrumbs,
+        });
       }
 
       const groups = Object.entries(byParent).map(([parent, secs]) => ({ parent, sections: secs }));
@@ -136,25 +162,34 @@ server.registerTool(
       logger.error('browse_wiki failed', { topic, wikiId, error: err.message });
       return withContent({ groups: [], count: 0, error: err.message });
     }
-  }
+  },
 );
 
 server.registerTool(
   'search_wiki',
   {
-    description: 'Search wiki sections by meaning (semantic search). Falls back to keyword matching if embeddings are unavailable. Returns matching section keys ranked by relevance.',
+    description:
+      'Search wiki sections by meaning (semantic search). Falls back to keyword matching if embeddings are unavailable. Returns matching section keys ranked by relevance.',
     inputSchema: {
-      query: z.string().min(1).max(200).describe('Search query — can be natural language or keywords'),
+      query: z
+        .string()
+        .min(1)
+        .max(200)
+        .describe('Search query — can be natural language or keywords'),
       wikiId: z.string().optional().describe('Filter by wiki instance'),
       fuzzy: z.boolean().optional().default(false).describe('Enable fuzzy matching for typos'),
       limit: z.number().optional().default(20).describe('Maximum number of results to return'),
     },
     outputSchema: {
-      results: z.array(z.object({
-        ...sectionRefSchema,
-        wikiId: z.string().describe('Wiki instance ID'),
-        snippet: z.string().optional().describe('Short content excerpt around the match'),
-      })).describe('Matching sections, header matches first'),
+      results: z
+        .array(
+          z.object({
+            ...sectionRefSchema,
+            wikiId: z.string().describe('Wiki instance ID'),
+            snippet: z.string().optional().describe('Short content excerpt around the match'),
+          }),
+        )
+        .describe('Matching sections, header matches first'),
       count: z.number().describe('Number of results'),
       suggestions: z.array(z.string()).optional().describe('Similar keys when no results found'),
       error: z.string().optional().describe('Error message if request failed'),
@@ -168,12 +203,16 @@ server.registerTool(
 
       if (results.length === 0) {
         const similar = await db.findSimilar(query, wikiId || null);
-        const suggestions = similar.map(s => s.key);
+        const suggestions = similar.map((s) => s.key);
         logger.info('search_wiki no results', { query, wikiId });
-        return withContent({ results: [], count: 0, suggestions: suggestions.length > 0 ? suggestions : undefined });
+        return withContent({
+          results: [],
+          count: 0,
+          suggestions: suggestions.length > 0 ? suggestions : undefined,
+        });
       }
 
-      const formattedResults = results.map(r => ({
+      const formattedResults = results.map((r) => ({
         key: r.key,
         wikiId: r.wikiId,
         parent: r.parent,
@@ -187,7 +226,7 @@ server.registerTool(
       logger.error('search_wiki failed', { query, error: err.message });
       return withContent({ results: [], count: 0, error: err.message });
     }
-  }
+  },
 );
 
 server.registerTool(
@@ -195,10 +234,23 @@ server.registerTool(
   {
     description: `Retrieve markdown content of a wiki section. Defaults to ${MAX_CONTENT_LENGTH} chars to save tokens. Set limit higher or use offset to read the full section.`,
     inputSchema: {
-      key: z.string().describe("The unique slug key of the section (e.g., 'portage-backend-architecture')"),
-      wikiId: z.string().optional().describe('Filter by wiki instance (required if key is not globally unique)'),
-      offset: z.number().optional().default(0).describe('Character offset to start from. Use to paginate through large sections.'),
-      limit: z.number().optional().default(MAX_CONTENT_LENGTH).describe(`Max characters to return. Default is ${MAX_CONTENT_LENGTH}.`),
+      key: z
+        .string()
+        .describe("The unique slug key of the section (e.g., 'portage-backend-architecture')"),
+      wikiId: z
+        .string()
+        .optional()
+        .describe('Filter by wiki instance (required if key is not globally unique)'),
+      offset: z
+        .number()
+        .optional()
+        .default(0)
+        .describe('Character offset to start from. Use to paginate through large sections.'),
+      limit: z
+        .number()
+        .optional()
+        .default(MAX_CONTENT_LENGTH)
+        .describe(`Max characters to return. Default is ${MAX_CONTENT_LENGTH}.`),
     },
     outputSchema: {
       key: z.string().optional().describe('Section slug key'),
@@ -213,10 +265,15 @@ server.registerTool(
       limit: z.number().optional().describe('Applied character limit'),
       hasMore: z.boolean().optional().describe('Whether more content exists beyond this page'),
       nextOffset: z.number().optional().describe('Offset for the next page, if hasMore is true'),
-      relatedSections: z.array(z.object({
-        key: z.string().describe('Related section key'),
-        title: z.string().describe('Related section title'),
-      })).optional().describe('Related sections by key prefix'),
+      relatedSections: z
+        .array(
+          z.object({
+            key: z.string().describe('Related section key'),
+            title: z.string().describe('Related section title'),
+          }),
+        )
+        .optional()
+        .describe('Related sections by key prefix'),
       error: z.string().optional().describe('Error message if section not found or key invalid'),
       suggestions: z.array(z.string()).optional().describe('Similar keys when section not found'),
     },
@@ -234,7 +291,7 @@ server.registerTool(
       const section = await db.getSection(key, { wikiId: wikiId || null, offset, limit });
       if (!section) {
         const similar = await db.findSimilar(key, wikiId || null);
-        const suggestions = similar.map(s => s.key);
+        const suggestions = similar.map((s) => s.key);
         logger.warn('get_wiki_section not found', { key, wikiId });
         return withContent({
           error: `Section '${key}' not found`,
@@ -246,11 +303,16 @@ server.registerTool(
       const prefix = key.split('-').slice(0, 2).join('-');
       const related = await db.browseSections(prefix, wikiId || null);
       const relatedSections = related
-        .filter(r => r.key !== key)
+        .filter((r) => r.key !== key)
         .slice(0, 5)
-        .map(r => ({ key: r.key, title: r.title }));
+        .map((r) => ({ key: r.key, title: r.title }));
 
-      logger.info('get_wiki_section', { key, wikiId, contentLength: section.content.length, totalLength: section.totalLength });
+      logger.info('get_wiki_section', {
+        key,
+        wikiId,
+        contentLength: section.content.length,
+        totalLength: section.totalLength,
+      });
       return withContent({
         key: section.key,
         title: section.title,
@@ -270,35 +332,47 @@ server.registerTool(
       logger.error('get_wiki_section failed', { key, error: err.message });
       return withContent({ error: err.message });
     }
-  }
+  },
 );
 
 server.registerTool(
   'get_wiki_sections',
   {
-    description: 'Retrieve multiple wiki sections at once. Each section is truncated to save tokens.',
+    description:
+      'Retrieve multiple wiki sections at once. Each section is truncated to save tokens.',
     inputSchema: {
-      keys: z.array(z.string()).min(1).max(MAX_BATCH_KEYS).describe(`Array of section slug keys to retrieve (max ${MAX_BATCH_KEYS})`),
+      keys: z
+        .array(z.string())
+        .min(1)
+        .max(MAX_BATCH_KEYS)
+        .describe(`Array of section slug keys to retrieve (max ${MAX_BATCH_KEYS})`),
       wikiId: z.string().optional().describe('Filter by wiki instance'),
     },
     outputSchema: {
-      sections: z.array(z.union([
-        z.object({
-          key: z.string().describe('Section slug key'),
-          wikiId: z.string().describe('Wiki instance ID'),
-          title: z.string().describe('Section display title'),
-          parent: z.string().describe('Parent topic name'),
-          breadcrumbs: z.array(z.string()).describe('Heading hierarchy from root to parent'),
-          source: z.string().describe('Source file path'),
-          content: z.string().describe('Section markdown content'),
-          truncated: z.boolean().describe('Whether content was truncated'),
-          totalLength: z.number().optional().describe('Total content length (present when truncated)'),
-        }),
-        z.object({
-          key: z.string().describe('Requested section slug key'),
-          error: z.string().describe('Error message'),
-        }),
-      ])).describe('Retrieved sections; error field present if section not found'),
+      sections: z
+        .array(
+          z.union([
+            z.object({
+              key: z.string().describe('Section slug key'),
+              wikiId: z.string().describe('Wiki instance ID'),
+              title: z.string().describe('Section display title'),
+              parent: z.string().describe('Parent topic name'),
+              breadcrumbs: z.array(z.string()).describe('Heading hierarchy from root to parent'),
+              source: z.string().describe('Source file path'),
+              content: z.string().describe('Section markdown content'),
+              truncated: z.boolean().describe('Whether content was truncated'),
+              totalLength: z
+                .number()
+                .optional()
+                .describe('Total content length (present when truncated)'),
+            }),
+            z.object({
+              key: z.string().describe('Requested section slug key'),
+              error: z.string().describe('Error message'),
+            }),
+          ]),
+        )
+        .describe('Retrieved sections; error field present if section not found'),
       successCount: z.number().describe('Number of successfully retrieved sections'),
       errorCount: z.number().describe('Number of sections that failed'),
       error: z.string().optional().describe('Error message if request failed'),
@@ -315,44 +389,59 @@ server.registerTool(
         if (err) keyErrors.set(k, err);
       }
 
-      const validKeys = keys.filter(k => !keyErrors.has(k));
-      const sections = validKeys.length > 0 ? await db.getSections(validKeys, { wikiId: wikiId || null }) : [];
+      const validKeys = keys.filter((k) => !keyErrors.has(k));
+      const sections =
+        validKeys.length > 0 ? await db.getSections(validKeys, { wikiId: wikiId || null }) : [];
 
-      const allSections = keys.map(k => {
+      const allSections = keys.map((k) => {
         if (keyErrors.has(k)) return { key: k, error: keyErrors.get(k) };
-        const section = sections.find(s => s.key === k);
+        const section = sections.find((s) => s.key === k);
         if (!section) return { key: k, error: `Section '${k}' not found` };
         return section;
       });
 
-      const errorCount = allSections.filter(s => s.error).length;
+      const errorCount = allSections.filter((s) => s.error).length;
       const result = {
         sections: allSections,
         successCount: keys.length - errorCount,
         errorCount,
       };
 
-      logger.info('get_wiki_sections', { requested: keys.length, success: result.successCount, errors: result.errorCount });
+      logger.info('get_wiki_sections', {
+        requested: keys.length,
+        success: result.successCount,
+        errors: result.errorCount,
+      });
       return withContent(result);
     } catch (err) {
       logger.error('get_wiki_sections failed', { keys, error: err.message });
-      return withContent({ sections: [], successCount: 0, errorCount: keys.length, error: err.message });
+      return withContent({
+        sections: [],
+        successCount: 0,
+        errorCount: keys.length,
+        error: err.message,
+      });
     }
-  }
+  },
 );
 
 server.registerTool(
   'get_wiki_info',
   {
-    description: 'Get metadata about the connected wiki instance — wiki IDs, section counts, and server uptime.',
+    description:
+      'Get metadata about the connected wiki instance — wiki IDs, section counts, and server uptime.',
     inputSchema: {
       wikiId: z.string().optional().describe('Filter by wiki instance'),
     },
     outputSchema: {
-      wikis: z.array(z.object({
-        wikiId: z.string().describe('Wiki instance ID'),
-        sectionCount: z.number().describe('Number of sections'),
-      })).describe('Wiki instances and their section counts'),
+      wikis: z
+        .array(
+          z.object({
+            wikiId: z.string().describe('Wiki instance ID'),
+            sectionCount: z.number().describe('Number of sections'),
+          }),
+        )
+        .describe('Wiki instances and their section counts'),
       uptime: z.number().describe('Server uptime in seconds'),
       error: z.string().optional().describe('Error message if request failed'),
     },
@@ -368,7 +457,7 @@ server.registerTool(
       logger.error('get_wiki_info failed', { error: err.message });
       return withContent({ wikis: [], uptime: 0, error: err.message });
     }
-  }
+  },
 );
 
 // ─── NEW TOOLS ───────────────────────────────────────────────────────────────
@@ -382,12 +471,16 @@ server.registerTool(
       wikiId: z.string().optional().describe('Filter by wiki instance'),
     },
     outputSchema: {
-      backlinks: z.array(z.object({
-        key: z.string().describe('Section that links here'),
-        wikiId: z.string().describe('Wiki instance of the linking section'),
-        title: z.string().describe('Title of the linking section'),
-        parent: z.string().describe('Parent topic of the linking section'),
-      })).describe('Sections that reference this one'),
+      backlinks: z
+        .array(
+          z.object({
+            key: z.string().describe('Section that links here'),
+            wikiId: z.string().describe('Wiki instance of the linking section'),
+            title: z.string().describe('Title of the linking section'),
+            parent: z.string().describe('Parent topic of the linking section'),
+          }),
+        )
+        .describe('Sections that reference this one'),
       count: z.number().describe('Number of backlinks'),
       error: z.string().optional().describe('Error message if request failed'),
     },
@@ -403,29 +496,42 @@ server.registerTool(
       logger.error('get_backlinks failed', { key, error: err.message });
       return withContent({ backlinks: [], count: 0, error: err.message });
     }
-  }
+  },
 );
 
 server.registerTool(
   'validate_wiki',
   {
-    description: 'Run validation checks on wiki sections — finds empty sections, orphaned sections, and unlinked sections.',
+    description:
+      'Run validation checks on wiki sections — finds empty sections, orphaned sections, and unlinked sections.',
     inputSchema: {
       wikiId: z.string().optional().describe('Filter by wiki instance'),
     },
     outputSchema: {
-      emptySections: z.array(z.object({
-        key: z.string(),
-        title: z.string(),
-      })).describe('Sections with no content'),
-      orphanedSections: z.array(z.object({
-        key: z.string(),
-        title: z.string(),
-      })).describe('Sections with no parent, children, or backlinks'),
-      unlinkedSections: z.array(z.object({
-        key: z.string(),
-        title: z.string(),
-      })).describe('Sections not linked from any other section'),
+      emptySections: z
+        .array(
+          z.object({
+            key: z.string(),
+            title: z.string(),
+          }),
+        )
+        .describe('Sections with no content'),
+      orphanedSections: z
+        .array(
+          z.object({
+            key: z.string(),
+            title: z.string(),
+          }),
+        )
+        .describe('Sections with no parent, children, or backlinks'),
+      unlinkedSections: z
+        .array(
+          z.object({
+            key: z.string(),
+            title: z.string(),
+          }),
+        )
+        .describe('Sections not linked from any other section'),
       error: z.string().optional().describe('Error message if request failed'),
     },
     annotations: readOnlyAnnotations,
@@ -443,9 +549,14 @@ server.registerTool(
       return withContent(results);
     } catch (err) {
       logger.error('validate_wiki failed', { error: err.message });
-      return withContent({ emptySections: [], orphanedSections: [], unlinkedSections: [], error: err.message });
+      return withContent({
+        emptySections: [],
+        orphanedSections: [],
+        unlinkedSections: [],
+        error: err.message,
+      });
     }
-  }
+  },
 );
 
 server.registerTool(
@@ -458,12 +569,16 @@ server.registerTool(
       limit: z.number().optional().default(10).describe('Number of history entries to return'),
     },
     outputSchema: {
-      history: z.array(z.object({
-        contentBefore: z.string().optional().describe('Content before the change'),
-        contentAfter: z.string().describe('Content after the change'),
-        changedAt: z.string().describe('ISO timestamp of the change'),
-        changeReason: z.string().optional().describe('Reason for the change'),
-      })).describe('Edit history entries'),
+      history: z
+        .array(
+          z.object({
+            contentBefore: z.string().optional().describe('Content before the change'),
+            contentAfter: z.string().describe('Content after the change'),
+            changedAt: z.string().describe('ISO timestamp of the change'),
+            changeReason: z.string().optional().describe('Reason for the change'),
+          }),
+        )
+        .describe('Edit history entries'),
       count: z.number().describe('Number of history entries'),
       error: z.string().optional().describe('Error message if request failed'),
     },
@@ -474,10 +589,11 @@ server.registerTool(
       const history = await db.getSectionHistory(wikiId, key, limit);
       logger.info('get_section_history', { key, wikiId, count: history.length });
       return withContent({
-        history: history.map(h => ({
+        history: history.map((h) => ({
           contentBefore: h.content_before ?? undefined,
           contentAfter: h.content_after,
-          changedAt: h.changed_at instanceof Date ? h.changed_at.toISOString() : String(h.changed_at),
+          changedAt:
+            h.changed_at instanceof Date ? h.changed_at.toISOString() : String(h.changed_at),
           changeReason: h.change_reason ?? undefined,
         })),
         count: history.length,
@@ -486,7 +602,7 @@ server.registerTool(
       logger.error('get_section_history failed', { key, wikiId, error: err.message });
       return withContent({ history: [], count: 0, error: err.message });
     }
-  }
+  },
 );
 
 // ─── WRITE TOOLS ─────────────────────────────────────────────────────────────
@@ -521,23 +637,44 @@ server.registerTool(
         return withContent({ created: false, error: 'Content cannot be empty' });
       }
       if (content.length > MAX_CONTENT_SIZE) {
-        return withContent({ created: false, error: `Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})` });
+        return withContent({
+          created: false,
+          error: `Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})`,
+        });
       }
 
-      const result = await db.createSection({ wikiId, key, title, content, parent: parent || null, tags: tags || [] });
+      const result = await db.createSection({
+        wikiId,
+        key,
+        title,
+        content,
+        parent: parent || null,
+        tags: tags || [],
+      });
       if (result && result.key) {
         logger.info('create_section', { wikiId, key, title });
-        return withContent({ key: result.key, wikiId: result.wiki_id, title: result.title, created: true });
+        return withContent({
+          key: result.key,
+          wikiId: result.wiki_id,
+          title: result.title,
+          created: true,
+        });
       }
       if (result && result.exists) {
-        return withContent({ created: false, error: `Section '${key}' already exists in ${wikiId}` });
+        return withContent({
+          created: false,
+          error: `Section '${key}' already exists in ${wikiId}`,
+        });
       }
-      return withContent({ created: false, error: `Failed to create section '${key}' in ${wikiId}` });
+      return withContent({
+        created: false,
+        error: `Failed to create section '${key}' in ${wikiId}`,
+      });
     } catch (err) {
       logger.error('create_section failed', { key, error: err.message });
       return withContent({ created: false, error: err.message });
     }
-  }
+  },
 );
 
 server.registerTool(
@@ -568,13 +705,21 @@ server.registerTool(
       if (keyError) return withContent({ updated: false, error: keyError });
 
       if (content !== undefined && content.length > MAX_CONTENT_SIZE) {
-        return withContent({ updated: false, error: `Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})` });
+        return withContent({
+          updated: false,
+          error: `Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})`,
+        });
       }
 
       const result = await db.updateSection({ wikiId, key, content, title, parent, tags, reason });
       if (result && result.key) {
         logger.info('update_section', { wikiId, key, reason });
-        return withContent({ key: result.key, wikiId: result.wiki_id, title: result.title, updated: true });
+        return withContent({
+          key: result.key,
+          wikiId: result.wiki_id,
+          title: result.title,
+          updated: true,
+        });
       }
       if (result && result.notFound) {
         return withContent({ updated: false, error: `Section '${key}' not found in ${wikiId}` });
@@ -582,12 +727,15 @@ server.registerTool(
       if (result && result.noChanges) {
         return withContent({ updated: false, error: 'No fields provided to update' });
       }
-      return withContent({ updated: false, error: `Failed to update section '${key}' in ${wikiId}` });
+      return withContent({
+        updated: false,
+        error: `Failed to update section '${key}' in ${wikiId}`,
+      });
     } catch (err) {
       logger.error('update_section failed', { key, error: err.message });
       return withContent({ updated: false, error: err.message });
     }
-  }
+  },
 );
 
 server.registerTool(
@@ -612,14 +760,19 @@ server.registerTool(
       const result = await db.deleteSection(wikiId, key);
       if (result) {
         logger.info('delete_section', { wikiId, key });
-        return withContent({ key: result.key, wikiId: result.wiki_id, title: result.title, deleted: true });
+        return withContent({
+          key: result.key,
+          wikiId: result.wiki_id,
+          title: result.title,
+          deleted: true,
+        });
       }
       return withContent({ deleted: false, error: `Section '${key}' not found in ${wikiId}` });
     } catch (err) {
       logger.error('delete_section failed', { key, error: err.message });
       return withContent({ deleted: false, error: err.message });
     }
-  }
+  },
 );
 
 // ─── IMPORT/EXPORT TOOLS ─────────────────────────────────────────────────────
@@ -627,10 +780,14 @@ server.registerTool(
 server.registerTool(
   'import_wiki',
   {
-    description: 'Import markdown files or a directory of markdown into the wiki database. Supports single .md files or directories. Auto-detects wiki_id from path basename unless explicitly provided.',
+    description:
+      'Import markdown files or a directory of markdown into the wiki database. Supports single .md files or directories. Auto-detects wiki_id from path basename unless explicitly provided.',
     inputSchema: {
       sourcePath: z.string().describe('Path to a .md file or directory containing .md files'),
-      wikiId: z.string().optional().describe('Wiki instance ID (auto-detected from path basename if not provided)'),
+      wikiId: z
+        .string()
+        .optional()
+        .describe('Wiki instance ID (auto-detected from path basename if not provided)'),
     },
     outputSchema: {
       wikiId: z.string().describe('Wiki instance ID that was imported into'),
@@ -649,23 +806,34 @@ server.registerTool(
       logger.error('import_wiki failed', { sourcePath, error: err.message });
       return withContent({ wikiId: wikiId || '', imported: 0, errors: [], error: err.message });
     }
-  }
+  },
 );
 
 server.registerTool(
   'export_wiki',
   {
-    description: 'Export wiki sections to markdown files. Exports all wikis by default, or a specific wiki if wikiId is provided.',
+    description:
+      'Export wiki sections to markdown files. Exports all wikis by default, or a specific wiki if wikiId is provided.',
     inputSchema: {
       outputDir: z.string().describe('Directory to write exported markdown files to'),
-      wikiId: z.string().optional().describe('Export only this wiki (exports all wikis if not provided)'),
+      wikiId: z
+        .string()
+        .optional()
+        .describe('Export only this wiki (exports all wikis if not provided)'),
     },
     outputSchema: {
-      results: z.array(z.object({
-        wikiId: z.string().describe('Wiki instance ID'),
-        exported: z.number().describe('Number of sections exported'),
-        filePath: z.string().nullable().describe('Path to the exported file (null if no sections)'),
-      })).describe('Export results per wiki'),
+      results: z
+        .array(
+          z.object({
+            wikiId: z.string().describe('Wiki instance ID'),
+            exported: z.number().describe('Number of sections exported'),
+            filePath: z
+              .string()
+              .nullable()
+              .describe('Path to the exported file (null if no sections)'),
+          }),
+        )
+        .describe('Export results per wiki'),
       error: z.string().optional().describe('Error message if export failed'),
     },
   },
@@ -685,7 +853,7 @@ server.registerTool(
       logger.error('export_wiki failed', { outputDir, error: err.message });
       return withContent({ results: [], error: err.message });
     }
-  }
+  },
 );
 
 // ─── SHUTDOWN ────────────────────────────────────────────────────────────────

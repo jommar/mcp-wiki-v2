@@ -9,8 +9,8 @@ import { logger } from '../logger.js';
 function pathToWikiId(sourcePath) {
   const basename = sourcePath.split('/').filter(Boolean).pop();
   const wikiIdMap = {
-    'wiki': 'user-wiki',
-    'docs': 'transact-wiki',
+    wiki: 'user-wiki',
+    docs: 'transact-wiki',
   };
   return wikiIdMap[basename] || basename.toLowerCase().replace(/[^a-z0-9]/g, '-');
 }
@@ -41,7 +41,8 @@ export async function importWiki(sourcePath, wikiId = null) {
         const section = parser.getSection(key);
         if (!section) continue;
 
-        const { rows: idRows } = await client.query(`
+        const { rows: idRows } = await client.query(
+          `
           INSERT INTO wiki_sections (wiki_id, key, parent, title, content, tags, status, metadata)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           ON CONFLICT (wiki_id, key) DO UPDATE SET
@@ -53,34 +54,40 @@ export async function importWiki(sourcePath, wikiId = null) {
             metadata = EXCLUDED.metadata,
             updated_at = NOW()
           RETURNING id
-        `, [
-          resolvedWikiId,
-          key,
-          section.parent === 'Root' ? null : section.parent,
-          section.title,
-          section.content,
-          [],
-          'active',
-          JSON.stringify({
-            breadcrumbs: section.breadcrumbs,
-            depth: section.depth,
-            file: section.file,
-            fileSlug: section.fileSlug,
-            filePath: section.filePath,
-            legacyKey: section.legacyKey,
-          }),
-        ]);
+        `,
+          [
+            resolvedWikiId,
+            key,
+            section.parent === 'Root' ? null : section.parent,
+            section.title,
+            section.content,
+            [],
+            'active',
+            JSON.stringify({
+              breadcrumbs: section.breadcrumbs,
+              depth: section.depth,
+              file: section.file,
+              fileSlug: section.fileSlug,
+              filePath: section.filePath,
+              legacyKey: section.legacyKey,
+            }),
+          ],
+        );
 
         // Generate and store embedding
         if (idRows.length > 0) {
           try {
-            const embedding = await getEmbedding(`${section.title}\n${section.content.slice(0, 2000)}`);
-            await client.query(
-              'UPDATE wiki_sections SET embedding = $1 WHERE id = $2',
-              [JSON.stringify(embedding), idRows[0].id]
+            const embedding = await getEmbedding(
+              `${section.title}\n${section.content.slice(0, 2000)}`,
             );
+            await client.query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
+              JSON.stringify(embedding),
+              idRows[0].id,
+            ]);
           } catch (err) {
-            logger.warn(`Failed to generate embedding for ${resolvedWikiId}/${key}`, { error: err.message });
+            logger.warn(`Failed to generate embedding for ${resolvedWikiId}/${key}`, {
+              error: err.message,
+            });
           }
         }
 

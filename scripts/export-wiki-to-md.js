@@ -1,6 +1,5 @@
 import { config } from 'dotenv';
 import { exportWiki, exportAllWikis } from '../src/export.js';
-import { logger } from '../logger.js';
 
 config();
 
@@ -17,8 +16,12 @@ function parseArgs() {
   const opts = { wikiId: null, output: './export' };
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--wiki' && args[i + 1]) { opts.wikiId = args[++i]; }
-    if (args[i] === '--output' && args[i + 1]) { opts.output = args[++i]; }
+    if (args[i] === '--wiki' && args[i + 1]) {
+      opts.wikiId = args[++i];
+    }
+    if (args[i] === '--output' && args[i + 1]) {
+      opts.output = args[++i];
+    }
   }
 
   return opts;
@@ -40,7 +43,7 @@ async function main() {
   console.log('\nDone');
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Export failed:', err);
   process.exit(1);
 });

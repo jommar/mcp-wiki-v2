@@ -7,13 +7,13 @@ services:
       POSTGRES_PASSWORD: wiki
       POSTGRES_DB: wiki
     ports:
-      - "5433:5432"
+      - '5433:5432'
     volumes:
       - wiki-data:/var/lib/postgresql/data
       - ./sql:/docker-entrypoint-initdb.d:ro
       - ./migration-staging:/import:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wiki -d wiki"]
+      test: ['CMD-SHELL', 'pg_isready -U wiki -d wiki']
       interval: 5s
       timeout: 3s
       retries: 5

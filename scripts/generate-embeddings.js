@@ -14,17 +14,19 @@ const pool = new Pool({
 });
 
 async function generateEmbeddings(batchSize = 50) {
-  let offset = 0;
   let totalProcessed = 0;
 
   while (true) {
-    const { rows } = await pool.query(`
+    const { rows } = await pool.query(
+      `
       SELECT id, wiki_id, key, title, content
       FROM wiki_sections
       WHERE embedding IS NULL
       ORDER BY id
       LIMIT $1
-    `, [batchSize]);
+    `,
+      [batchSize],
+    );
 
     if (rows.length === 0) break;
 
@@ -34,10 +36,10 @@ async function generateEmbeddings(batchSize = 50) {
         const text = `${row.title}\n${row.content.slice(0, 2000)}`;
         const embedding = await getEmbedding(text);
 
-        await pool.query(
-          'UPDATE wiki_sections SET embedding = $1 WHERE id = $2',
-          [JSON.stringify(embedding), row.id]
-        );
+        await pool.query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
+          JSON.stringify(embedding),
+          row.id,
+        ]);
 
         totalProcessed++;
         logger.info(`Embedded: ${row.wiki_id}/${row.key} (${totalProcessed} total)`);
@@ -45,8 +47,6 @@ async function generateEmbeddings(batchSize = 50) {
         logger.error(`Failed to embed ${row.wiki_id}/${row.key}`, { error: err.message });
       }
     }
-
-    offset += rows.length;
   }
 
   return totalProcessed;
@@ -56,7 +56,7 @@ async function main() {
   console.log('\nWiki V2 Embedding Generator\n');
 
   const { rows: pending } = await pool.query(
-    'SELECT COUNT(*) as count FROM wiki_sections WHERE embedding IS NULL'
+    'SELECT COUNT(*) as count FROM wiki_sections WHERE embedding IS NULL',
   );
   console.log(`Sections without embeddings: ${pending[0].count}`);
 
@@ -72,7 +72,7 @@ async function main() {
   await pool.end();
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Embedding generation failed:', err);
   process.exit(1);
 });

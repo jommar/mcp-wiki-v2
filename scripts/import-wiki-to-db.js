@@ -1,19 +1,20 @@
 import { config } from 'dotenv';
 import { importWiki } from '../src/import.js';
 import { pool } from '../src/db.js';
-import { logger } from '../logger.js';
 
 config();
 
 // Parse WIKI_SOURCES env var (comma-separated paths)
 const WIKI_SOURCES = (process.env.WIKI_SOURCES || '')
   .split(',')
-  .map(s => s.trim())
+  .map((s) => s.trim())
   .filter(Boolean);
 
 async function main() {
   if (WIKI_SOURCES.length === 0) {
-    console.error('Error: WIKI_SOURCES env var not set. Example: WIKI_SOURCES=/ai/wiki,/home/dev/transAct/docs');
+    console.error(
+      'Error: WIKI_SOURCES env var not set. Example: WIKI_SOURCES=/ai/wiki,/home/dev/transAct/docs',
+    );
     process.exit(1);
   }
 
@@ -29,7 +30,7 @@ async function main() {
   }
 
   const { rows: stats } = await pool.query(
-    'SELECT wiki_id, COUNT(*) as count FROM wiki_sections GROUP BY wiki_id ORDER BY wiki_id'
+    'SELECT wiki_id, COUNT(*) as count FROM wiki_sections GROUP BY wiki_id ORDER BY wiki_id',
   );
   console.log('\nVerification:');
   for (const row of stats) {
@@ -43,7 +44,7 @@ async function main() {
   await pool.end();
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Import failed:', err);
   process.exit(1);
 });

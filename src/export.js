@@ -20,7 +20,7 @@ const pool = new Pool({
 export async function exportWiki(wikiId, outputDir) {
   const { rows: sections } = await pool.query(
     'SELECT key, parent, title, content FROM wiki_sections WHERE wiki_id = $1 ORDER BY parent, key',
-    [wikiId]
+    [wikiId],
   );
 
   if (sections.length === 0) {
@@ -51,7 +51,9 @@ export async function exportWiki(wikiId, outputDir) {
   const fileName = `${wikiId}.md`;
   const filePath = path.join(outputDir, fileName);
   fs.writeFileSync(filePath, content, 'utf8');
-  logger.info(`[${wikiId}] Wrote ${fileName} (${totalWritten} sections, ${(content.length / 1024).toFixed(1)}KB)`);
+  logger.info(
+    `[${wikiId}] Wrote ${fileName} (${totalWritten} sections, ${(content.length / 1024).toFixed(1)}KB)`,
+  );
 
   return { wikiId, exported: totalWritten, filePath };
 }
@@ -63,7 +65,7 @@ export async function exportWiki(wikiId, outputDir) {
  */
 export async function exportAllWikis(outputDir) {
   const { rows: wikis } = await pool.query(
-    'SELECT DISTINCT wiki_id FROM wiki_sections ORDER BY wiki_id'
+    'SELECT DISTINCT wiki_id FROM wiki_sections ORDER BY wiki_id',
   );
 
   const results = [];

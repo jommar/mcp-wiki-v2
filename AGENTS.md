@@ -88,6 +88,7 @@ Related: [[portage-backend-database]]
 ### When to Update the Wiki
 
 Update wiki sections when:
+
 1. User confirms a feature/fix is complete
 2. A new architectural constraint is established
 3. Tech stack or tooling changes
