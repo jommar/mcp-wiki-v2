@@ -3,6 +3,10 @@ const { Pool } = pkg;
 import { logger } from '../logger.js';
 import { getEmbedding } from './embedding.js';
 
+// Constants for auto-linking and access tracking
+const MAX_ACCESS_COUNT = 9999;
+const MAX_LINKS_PER_SECTION = 4;
+
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5433'),
@@ -749,6 +753,41 @@ export async function updateSectionContent(key, wikiId, content, reason = 'auto-
   }
 
   return rows[0] || null;
+}
+
+/**
+ * Increment access count and update last_accessed timestamp.
+ * Capped at MAX_ACCESS_COUNT to prevent overflow.
+ */
+export async function incrementAccessCount(wikiId, key) {
+  await pool.query(
+    `UPDATE wiki_sections
+     SET access_count = LEAST(access_count + 1, $1),
+         last_accessed = NOW()
+     WHERE wiki_id = $2 AND key = $3`,
+    [MAX_ACCESS_COUNT, wikiId, key],
+  );
+}
+
+/**
+ * Re-link a section based on embedding similarity.
+ * Deletes existing outgoing links and inserts new ones.
+ */
+export async function relinkSection(wikiId, key) {
+  // Delete existing outgoing links
+  await pool.query(
+    `DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`,
+    [wikiId, key],
+  );
+
+  // Find similar sections
+  const similar = await findSimilarSections(key, wikiId, MAX_LINKS_PER_SECTION);
+  if (similar.length < 2) return;
+
+  // Insert new links
+  for (const target of similar) {
+    await insertSectionLink(wikiId, key, target.wikiId, target.key);
+  }
 }
 
 export { pool };

@@ -768,12 +768,16 @@ process.on('unhandledRejection', (reason) => {
   shutdown();
 });
 
+import { runMigrations } from './migrate.js';
+
 logger.info('Starting Wiki Explorer V2 MCP Server', {
   dbHost: process.env.DB_HOST || 'localhost',
   dbPort: process.env.DB_PORT || '5433',
   pid: process.pid,
   node: process.version,
 });
+
+await runMigrations();
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

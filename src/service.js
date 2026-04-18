@@ -103,6 +103,14 @@ export async function getWikiSection(key, wikiId, offset, limit) {
     .slice(0, 5)
     .map((r) => ({ key: r.key, title: r.title }));
 
+  // Fire-and-forget: track access and re-link in background
+  db.incrementAccessCount(wikiId || section.wikiId, section.key).catch((err) =>
+    logger.warn('Failed to increment access count', { key: section.key, error: err.message }),
+  );
+  db.relinkSection(wikiId || section.wikiId, section.key).catch((err) =>
+    logger.warn('Failed to relink section', { key: section.key, error: err.message }),
+  );
+
   return formatResponse({
     key: section.key,
     title: section.title,
@@ -139,6 +147,19 @@ export async function getWikiSections(keys, wikiId) {
   });
 
   const errorCount = allSections.filter((s) => s.error).length;
+
+  // Fire-and-forget: track access and re-link for each successfully returned section
+  for (const s of allSections) {
+    if (!s.error) {
+      db.incrementAccessCount(wikiId || s.wikiId, s.key).catch((err) =>
+        logger.warn('Failed to increment access count', { key: s.key, error: err.message }),
+      );
+      db.relinkSection(wikiId || s.wikiId, s.key).catch((err) =>
+        logger.warn('Failed to relink section', { key: s.key, error: err.message }),
+      );
+    }
+  }
+
   return formatResponse({
     sections: allSections,
     successCount: keys.length - errorCount,
