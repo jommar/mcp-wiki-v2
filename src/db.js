@@ -11,6 +11,11 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'wiki',
 });
 
+// Enable required extensions
+pool.query('CREATE EXTENSION IF NOT EXISTS fuzzystrmatch').catch(() => {
+  // Ignore - extension may already exist or require superuser
+});
+
 /**
  * List all sections with optional wiki_id filter.
  */
