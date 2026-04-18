@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { config } from 'dotenv';
 import { logger } from '../logger.js';
 import * as db from './db.js';
+import * as wikiImport from './import.js';
+import * as wikiExport from './export.js';
 
 config();
 
@@ -616,6 +618,72 @@ server.registerTool(
     } catch (err) {
       logger.error('delete_section failed', { key, error: err.message });
       return withContent({ deleted: false, error: err.message });
+    }
+  }
+);
+
+// ─── IMPORT/EXPORT TOOLS ─────────────────────────────────────────────────────
+
+server.registerTool(
+  'import_wiki',
+  {
+    description: 'Import markdown files or a directory of markdown into the wiki database. Supports single .md files or directories. Auto-detects wiki_id from path basename unless explicitly provided.',
+    inputSchema: {
+      sourcePath: z.string().describe('Path to a .md file or directory containing .md files'),
+      wikiId: z.string().optional().describe('Wiki instance ID (auto-detected from path basename if not provided)'),
+    },
+    outputSchema: {
+      wikiId: z.string().describe('Wiki instance ID that was imported into'),
+      imported: z.number().describe('Number of sections imported'),
+      errors: z.array(z.string()).describe('List of errors for sections that failed to import'),
+      error: z.string().optional().describe('Error message if import failed entirely'),
+    },
+  },
+  async ({ sourcePath, wikiId }) => {
+    try {
+      requestCounts.import_wiki = (requestCounts.import_wiki || 0) + 1;
+      const result = await wikiImport.importWiki(sourcePath, wikiId || null);
+      logger.info('import_wiki', { sourcePath, wikiId: result.wikiId, imported: result.imported });
+      return withContent(result);
+    } catch (err) {
+      logger.error('import_wiki failed', { sourcePath, error: err.message });
+      return withContent({ wikiId: wikiId || '', imported: 0, errors: [], error: err.message });
+    }
+  }
+);
+
+server.registerTool(
+  'export_wiki',
+  {
+    description: 'Export wiki sections to markdown files. Exports all wikis by default, or a specific wiki if wikiId is provided.',
+    inputSchema: {
+      outputDir: z.string().describe('Directory to write exported markdown files to'),
+      wikiId: z.string().optional().describe('Export only this wiki (exports all wikis if not provided)'),
+    },
+    outputSchema: {
+      results: z.array(z.object({
+        wikiId: z.string().describe('Wiki instance ID'),
+        exported: z.number().describe('Number of sections exported'),
+        filePath: z.string().nullable().describe('Path to the exported file (null if no sections)'),
+      })).describe('Export results per wiki'),
+      error: z.string().optional().describe('Error message if export failed'),
+    },
+  },
+  async ({ outputDir, wikiId }) => {
+    try {
+      requestCounts.export_wiki = (requestCounts.export_wiki || 0) + 1;
+      let results;
+      if (wikiId) {
+        const result = await wikiExport.exportWiki(wikiId, outputDir);
+        results = [result];
+      } else {
+        results = await wikiExport.exportAllWikis(outputDir);
+      }
+      logger.info('export_wiki', { outputDir, wikiId, wikis: results.length });
+      return withContent({ results });
+    } catch (err) {
+      logger.error('export_wiki failed', { outputDir, error: err.message });
+      return withContent({ results: [], error: err.message });
     }
   }
 );

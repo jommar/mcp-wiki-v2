@@ -1,18 +1,8 @@
-import { Pool } from 'pg';
-import fs from 'fs';
-import path from 'path';
 import { config } from 'dotenv';
+import { exportWiki, exportAllWikis } from '../src/export.js';
 import { logger } from '../logger.js';
 
 config();
-
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5433'),
-  user: process.env.DB_USER || 'wiki',
-  password: process.env.DB_PASSWORD || 'wiki',
-  database: process.env.DB_NAME || 'wiki',
-});
 
 /**
  * Export wiki sections to markdown files.
@@ -34,69 +24,19 @@ function parseArgs() {
   return opts;
 }
 
-async function exportWiki(wikiId, outputDir) {
-  const { rows: sections } = await pool.query(
-    'SELECT key, parent, title, content FROM wiki_sections WHERE wiki_id = $1 ORDER BY key',
-    [wikiId]
-  );
-
-  if (sections.length === 0) {
-    console.log(`[${wikiId}] No sections found`);
-    return 0;
-  }
-
-  // Group by parent for organized output
-  const byParent = {};
-  for (const s of sections) {
-    const parent = s.parent || 'Root';
-    if (!byParent[parent]) byParent[parent] = [];
-    byParent[parent].push(s);
-  }
-
-  // Write one file per parent group
-  let totalWritten = 0;
-  for (const [parent, group] of Object.entries(byParent)) {
-    const safeParent = parent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'root';
-    const fileName = `${safeParent}.md`;
-    const filePath = path.join(outputDir, fileName);
-
-    let content = `# ${parent}\n\n`;
-    for (const section of group) {
-      content += `## ${section.title} {#${section.key}}\n\n`;
-      content += section.content + '\n\n';
-      content += '---\n\n';
-      totalWritten++;
-    }
-
-    fs.writeFileSync(filePath, content, 'utf8');
-    logger.info(`[${wikiId}] Wrote ${fileName} (${group.length} sections)`);
-  }
-
-  return totalWritten;
-}
-
 async function main() {
   const { wikiId, output } = parseArgs();
 
-  // Create output directory
-  fs.mkdirSync(output, { recursive: true });
-
   if (wikiId) {
-    // Export single wiki
-    const count = await exportWiki(wikiId, output);
-    console.log(`\nExported ${count} sections from ${wikiId} → ${output}/`);
+    const result = await exportWiki(wikiId, output);
+    console.log(`\nExported ${result.exported} sections from ${wikiId} → ${result.filePath}`);
   } else {
-    // Export all wikis
-    const { rows: wikis } = await pool.query('SELECT DISTINCT wiki_id FROM wiki_sections ORDER BY wiki_id');
-    for (const { wiki_id } of wikis) {
-      const wikiDir = path.join(output, wiki_id);
-      fs.mkdirSync(wikiDir, { recursive: true });
-      const count = await exportWiki(wiki_id, wikiDir);
-      console.log(`Exported ${count} sections from ${wiki_id} → ${wikiDir}/`);
+    const results = await exportAllWikis(output);
+    for (const r of results) {
+      console.log(`Exported ${r.exported} sections from ${r.wikiId} → ${r.filePath}`);
     }
   }
 
-  await pool.end();
   console.log('\nDone');
 }
 
