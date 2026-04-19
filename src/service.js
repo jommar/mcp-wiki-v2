@@ -4,6 +4,7 @@
 import * as db from './db.js';
 import * as wikiImport from './import.js';
 import * as wikiExport from './export.js';
+import { logger } from '../logger.js';
 
 // Constants
 export const MAX_BATCH_KEYS = 20;
@@ -247,7 +248,16 @@ export async function createSection(wikiId, key, title, content, parent, tags, r
   });
 }
 
-export async function updateSection(wikiId, key, content, title, parent, tags, reason, relatedKeys) {
+export async function updateSection(
+  wikiId,
+  key,
+  content,
+  title,
+  parent,
+  tags,
+  reason,
+  relatedKeys,
+) {
   const keyError = validateKey(key);
   if (keyError) return formatResponse({ updated: false, error: keyError });
 
@@ -258,7 +268,16 @@ export async function updateSection(wikiId, key, content, title, parent, tags, r
     });
   }
 
-  const result = await db.updateSection({ wikiId, key, content, title, parent, tags, reason, relatedKeys });
+  const result = await db.updateSection({
+    wikiId,
+    key,
+    content,
+    title,
+    parent,
+    tags,
+    reason,
+    relatedKeys,
+  });
   if (result && result.key) {
     return formatResponse({
       key: result.key,
@@ -320,7 +339,10 @@ export async function autoLinkSections(wikiId, options = {}) {
 
   if (sectionsWithEmbeddings.length === 0) {
     // No sections to process, just log and return
-    logger.info('autoLinkSections: No sections with embeddings found. Run import_wiki first to generate embeddings.', { wikiId });
+    logger.info(
+      'autoLinkSections: No sections with embeddings found. Run import_wiki first to generate embeddings.',
+      { wikiId },
+    );
     return;
   }
 
@@ -364,4 +386,3 @@ export async function autoLinkSections(wikiId, options = {}) {
   });
   return;
 }
-

@@ -242,7 +242,7 @@ server.registerTool(
             wikiId: z.string().describe('Wiki instance ID'),
             title: z.string().describe('Backlink section title'),
             parent: z.string().describe('Parent topic name'),
-          })
+          }),
         )
         .optional()
         .describe('Sections that link to this section'),
@@ -503,7 +503,10 @@ server.registerTool(
       content: z.string().describe('Markdown content'),
       parent: z.string().optional().describe('Parent topic name'),
       tags: z.array(z.string()).optional().describe('Tags for categorization'),
-      relatedKeys: z.array(z.string()).optional().describe('Section keys to link to (populates section_links)'),
+      relatedKeys: z
+        .array(z.string())
+        .optional()
+        .describe('Section keys to link to (populates section_links)'),
     },
     outputSchema: {
       key: z.string().optional().describe('Created section key'),
@@ -537,7 +540,10 @@ server.registerTool(
       parent: z.string().optional().describe('New parent topic'),
       tags: z.array(z.string()).optional().describe('New tags'),
       reason: z.string().optional().describe('Reason for the change (recorded in history)'),
-      relatedKeys: z.array(z.string()).optional().describe('Replace outgoing links with these section keys'),
+      relatedKeys: z
+        .array(z.string())
+        .optional()
+        .describe('Replace outgoing links with these section keys'),
     },
     outputSchema: {
       key: z.string().optional().describe('Updated section key'),
@@ -551,7 +557,16 @@ server.registerTool(
     try {
       requestCounts.update_section++;
       logger.info('update_section', { wikiId, key, reason });
-      return await service.updateSection(wikiId, key, content, title, parent, tags, reason, relatedKeys);
+      return await service.updateSection(
+        wikiId,
+        key,
+        content,
+        title,
+        parent,
+        tags,
+        reason,
+        relatedKeys,
+      );
     } catch (err) {
       logger.error('update_section failed', { key, error: err.message });
       return service.formatResponse({ updated: false, error: err.message });
@@ -604,7 +619,10 @@ server.registerTool(
     outputSchema: {
       wikiId: z.string().describe('Wiki instance ID that was imported into'),
       imported: z.number().describe('Number of sections imported'),
-      linksInserted: z.number().optional().describe('Number of section_links populated from **Related:** patterns'),
+      linksInserted: z
+        .number()
+        .optional()
+        .describe('Number of section_links populated from **Related:** patterns'),
       errors: z.array(z.string()).describe('List of errors for sections that failed to import'),
       error: z.string().optional().describe('Error message if import failed entirely'),
     },
@@ -683,23 +701,27 @@ server.registerTool(
         .optional()
         .default(4)
         .describe('Maximum number of related links per section (default 4)'),
-      
     },
     outputSchema: z.object({
-  message: z.string().describe('Status message'),
-  error: z.string().optional().describe('Error message if request failed'),
-}),
+      message: z.string().describe('Status message'),
+      error: z.string().optional().describe('Error message if request failed'),
+    }),
   },
   async ({ wikiId, minSimilarity, maxLinks }) => {
+    // Note: intentionally not awaiting background operation
+    await null;
     try {
       requestCounts.auto_link_sections = (requestCounts.auto_link_sections || 0) + 1;
       logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks });
       // Run in background
-      service.autoLinkSections(wikiId, { minSimilarity, maxLinks })
+      service
+        .autoLinkSections(wikiId, { minSimilarity, maxLinks })
         .then(() => logger.info('auto_link_sections completed', { wikiId }))
-        .catch((err) => logger.error('auto_link_sections failed (background)', { wikiId, error: err.message }));
+        .catch((err) =>
+          logger.error('auto_link_sections failed (background)', { wikiId, error: err.message }),
+        );
       return service.formatResponse({
-        message: 'Auto-linking is running in the background. Results will not be sent back.'
+        message: 'Auto-linking is running in the background. Results will not be sent back.',
       });
     } catch (err) {
       logger.error('auto_link_sections failed', { wikiId, error: err.message });
