@@ -79,7 +79,7 @@ export async function searchWiki(query, wikiId, fuzzy, limit) {
   return formatResponse({ results: formattedResults, count: results.length });
 }
 
-export async function getWikiSection(key, wikiId, offset, limit) {
+export async function getWikiSection(key, wikiId, offset, limit, includeBacklinks = false) {
   const keyError = validateKey(key);
   if (keyError) {
     return formatResponse({ error: keyError });
@@ -111,6 +111,11 @@ export async function getWikiSection(key, wikiId, offset, limit) {
     logger.warn('Failed to relink section', { key: section.key, error: err.message }),
   );
 
+  let backlinks;
+  if (includeBacklinks) {
+    backlinks = await db.getBacklinks(key, wikiId || null);
+  }
+
   return formatResponse({
     key: section.key,
     title: section.title,
@@ -125,6 +130,7 @@ export async function getWikiSection(key, wikiId, offset, limit) {
     hasMore: section.hasMore,
     nextOffset: section.nextOffset,
     relatedSections,
+    ...(includeBacklinks && { backlinks }),
   });
 }
 

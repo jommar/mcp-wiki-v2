@@ -207,6 +207,11 @@ server.registerTool(
         .optional()
         .default(service.MAX_CONTENT_LENGTH)
         .describe(`Max characters to return. Default is ${service.MAX_CONTENT_LENGTH}.`),
+      includeBacklinks: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('If true, also include backlinks in the response'),
     },
     outputSchema: {
       key: z.string().optional().describe('Section slug key'),
@@ -230,16 +235,27 @@ server.registerTool(
         )
         .optional()
         .describe('Related sections by key prefix'),
+      backlinks: z
+        .array(
+          z.object({
+            key: z.string().describe('Backlink section key'),
+            wikiId: z.string().describe('Wiki instance ID'),
+            title: z.string().describe('Backlink section title'),
+            parent: z.string().describe('Parent topic name'),
+          })
+        )
+        .optional()
+        .describe('Sections that link to this section'),
       error: z.string().optional().describe('Error message if section not found or key invalid'),
       suggestions: z.array(z.string()).optional().describe('Similar keys when section not found'),
     },
     annotations: readOnlyAnnotations,
   },
-  async ({ key, wikiId, offset, limit }) => {
+  async ({ key, wikiId, offset, limit, includeBacklinks }) => {
     try {
       requestCounts.get_wiki_section++;
-      logger.info('get_wiki_section', { key, wikiId, offset, limit });
-      return await service.getWikiSection(key, wikiId, offset, limit);
+      logger.info('get_wiki_section', { key, wikiId, offset, limit, includeBacklinks });
+      return await service.getWikiSection(key, wikiId, offset, limit, includeBacklinks);
     } catch (err) {
       logger.error('get_wiki_section failed', { key, error: err.message });
       return service.formatResponse({ error: err.message });
