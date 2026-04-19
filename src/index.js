@@ -499,7 +499,7 @@ server.registerTool(
   'create_section',
   {
     description:
-      'Create a new bite-sized wiki section. CRITICAL: Break large topics down into atomic, highly specific concepts. (e.g., Instead of one "Tech Stack" section, create separate sections for "Frontend", "Backend", and "Infrastructure").',
+      'Create a new bite-sized wiki section. CRITICAL: Before creating, ALWAYS search for existing sections using search_wiki to avoid duplicates. Check if a similar section already exists — if so, use update_section instead. Only create new sections for genuinely new topics.',
     inputSchema: {
       wikiId: z.string().describe('Wiki instance ID (e.g., "user-wiki", "transact-wiki")'),
       key: z.string().describe('Unique slug key (lowercase alphanumeric with hyphens)'),
