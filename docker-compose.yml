@@ -20,7 +20,7 @@ services:
     restart: unless-stopped
 
   wiki-server:
-    image: node:20-slim
+    build: .
     container_name: wiki-v2-server
     working_dir: /home/dev/mcp/wiki-v2
     volumes:
@@ -28,9 +28,9 @@ services:
     environment:
       DB_HOST: wiki-db
       DB_PORT: 5432
-      DB_USER: wiki
-      DB_PASSWORD: wiki
-      DB_NAME: wiki
+      DB_USER: ${DB_USER:-wiki}
+      DB_PASSWORD: ${DB_PASSWORD:-wiki}
+      DB_NAME: ${DB_NAME:-wiki}
     depends_on:
       wiki-db:
         condition: service_healthy
