@@ -35,6 +35,9 @@ const requestCounts = {
   auto_link_sections: 0,
 };
 
+// Track background tasks for graceful shutdown
+const backgroundTasks = new Map(); // wikiId -> Promise
+
 const readOnlyAnnotations = { readOnlyHint: true };
 
 const sectionRefSchema = {
@@ -207,6 +210,11 @@ server.registerTool(
         .optional()
         .default(service.MAX_CONTENT_LENGTH)
         .describe(`Max characters to return. Default is ${service.MAX_CONTENT_LENGTH}.`),
+      includeBacklinks: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('If true, also include backlinks in the response'),
     },
     outputSchema: {
       key: z.string().optional().describe('Section slug key'),
@@ -230,16 +238,27 @@ server.registerTool(
         )
         .optional()
         .describe('Related sections by key prefix'),
+      backlinks: z
+        .array(
+          z.object({
+            key: z.string().describe('Backlink section key'),
+            wikiId: z.string().describe('Wiki instance ID'),
+            title: z.string().describe('Backlink section title'),
+            parent: z.string().describe('Parent topic name'),
+          }),
+        )
+        .optional()
+        .describe('Sections that link to this section'),
       error: z.string().optional().describe('Error message if section not found or key invalid'),
       suggestions: z.array(z.string()).optional().describe('Similar keys when section not found'),
     },
     annotations: readOnlyAnnotations,
   },
-  async ({ key, wikiId, offset, limit }) => {
+  async ({ key, wikiId, offset, limit, includeBacklinks }) => {
     try {
       requestCounts.get_wiki_section++;
-      logger.info('get_wiki_section', { key, wikiId, offset, limit });
-      return await service.getWikiSection(key, wikiId, offset, limit);
+      logger.info('get_wiki_section', { key, wikiId, offset, limit, includeBacklinks });
+      return await service.getWikiSection(key, wikiId, offset, limit, includeBacklinks);
     } catch (err) {
       logger.error('get_wiki_section failed', { key, error: err.message });
       return service.formatResponse({ error: err.message });
@@ -479,15 +498,23 @@ server.registerTool(
 server.registerTool(
   'create_section',
   {
-    description: 'Create a new wiki section.',
+    description:
+      'Create a new bite-sized wiki section. CRITICAL: Before creating, ALWAYS search for existing sections using search_wiki to avoid duplicates. Check if a similar section already exists — if so, use update_section instead. Only create new sections for genuinely new topics.',
     inputSchema: {
       wikiId: z.string().describe('Wiki instance ID (e.g., "user-wiki", "transact-wiki")'),
       key: z.string().describe('Unique slug key (lowercase alphanumeric with hyphens)'),
       title: z.string().describe('Display title'),
-      content: z.string().describe('Markdown content'),
-      parent: z.string().optional().describe('Parent topic name'),
+      content: z
+        .string()
+        .describe(
+          'Markdown content. KEEP IT SHORT AND BITE-SIZED. Maximum 3-4 bullet points or sentences per section. Do not combine multiple broad categories here.',
+        ),
+      parent: z.string().describe('Parent topic name'),
       tags: z.array(z.string()).optional().describe('Tags for categorization'),
-      relatedKeys: z.array(z.string()).optional().describe('Section keys to link to (populates section_links)'),
+      relatedKeys: z
+        .array(z.string())
+        .optional()
+        .describe('Section keys to link to (populates section_links)'),
     },
     outputSchema: {
       key: z.string().optional().describe('Created section key'),
@@ -521,7 +548,10 @@ server.registerTool(
       parent: z.string().optional().describe('New parent topic'),
       tags: z.array(z.string()).optional().describe('New tags'),
       reason: z.string().optional().describe('Reason for the change (recorded in history)'),
-      relatedKeys: z.array(z.string()).optional().describe('Replace outgoing links with these section keys'),
+      relatedKeys: z
+        .array(z.string())
+        .optional()
+        .describe('Replace outgoing links with these section keys'),
     },
     outputSchema: {
       key: z.string().optional().describe('Updated section key'),
@@ -535,7 +565,16 @@ server.registerTool(
     try {
       requestCounts.update_section++;
       logger.info('update_section', { wikiId, key, reason });
-      return await service.updateSection(wikiId, key, content, title, parent, tags, reason, relatedKeys);
+      return await service.updateSection(
+        wikiId,
+        key,
+        content,
+        title,
+        parent,
+        tags,
+        reason,
+        relatedKeys,
+      );
     } catch (err) {
       logger.error('update_section failed', { key, error: err.message });
       return service.formatResponse({ updated: false, error: err.message });
@@ -588,7 +627,10 @@ server.registerTool(
     outputSchema: {
       wikiId: z.string().describe('Wiki instance ID that was imported into'),
       imported: z.number().describe('Number of sections imported'),
-      linksInserted: z.number().optional().describe('Number of section_links populated from **Related:** patterns'),
+      linksInserted: z
+        .number()
+        .optional()
+        .describe('Number of section_links populated from **Related:** patterns'),
       errors: z.array(z.string()).describe('List of errors for sections that failed to import'),
       error: z.string().optional().describe('Error message if import failed entirely'),
     },
@@ -654,7 +696,7 @@ server.registerTool(
   'auto_link_sections',
   {
     description:
-      'Automatically find related sections using vector embeddings and append **Related:** [[key]] blocks to sections that lack them. Uses cosine similarity on stored embeddings. Run dryRun=true first to preview changes without modifying content.',
+      'Automatically find related sections using vector embeddings and append **Related:** [[key]] blocks to sections that lack them. Uses cosine similarity on stored embeddings. This endpoint always runs in the background and returns only a status message. Results are never returned directly.',
     inputSchema: {
       wikiId: z.string().optional().describe('Wiki instance ID to process'),
       minSimilarity: z
@@ -667,53 +709,46 @@ server.registerTool(
         .optional()
         .default(4)
         .describe('Maximum number of related links per section (default 4)'),
-      dryRun: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe('Preview mode — show what would change without modifying content'),
     },
-    outputSchema: {
-      wikiId: z.string().describe('Wiki instance ID that was processed'),
-      updated: z.number().describe('Number of sections updated'),
-      skipped: z.number().describe('Number of sections skipped (already have links or no match)'),
-      total: z.number().describe('Total sections with embeddings'),
-      dryRun: z.boolean().describe('Whether this was a dry run'),
-      results: z
-        .array(
-          z.object({
-            key: z.string().describe('Section key'),
-            title: z.string().describe('Section title'),
-            related: z
-              .array(
-                z.object({
-                  key: z.string().describe('Related section key'),
-                  title: z.string().describe('Related section title'),
-                  similarity: z.number().describe('Cosine similarity score'),
-                }),
-              )
-              .describe('Related sections that would be/were linked'),
-          }),
-        )
-        .describe('Details of updated sections (max 50)'),
-      message: z.string().describe('Summary message'),
+    outputSchema: z.object({
+      message: z.string().describe('Status message'),
       error: z.string().optional().describe('Error message if request failed'),
-    },
+    }),
   },
-  async ({ wikiId, minSimilarity, maxLinks, dryRun }) => {
+  ({ wikiId, minSimilarity, maxLinks }) => {
     try {
       requestCounts.auto_link_sections = (requestCounts.auto_link_sections || 0) + 1;
-      logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks, dryRun });
-      return await service.autoLinkSections(wikiId, { minSimilarity, maxLinks, dryRun });
+      logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks });
+
+      // If already running for this wiki, reject
+      const taskKey = wikiId || 'default';
+      if (backgroundTasks.has(taskKey)) {
+        return service.formatResponse({
+          message: '',
+          error: `Auto-linking already in progress for ${taskKey}. Wait for it to complete.`,
+        });
+      }
+
+      // Run in background and track for shutdown
+      const task = service.autoLinkSections(wikiId, { minSimilarity, maxLinks });
+      backgroundTasks.set(taskKey, task);
+      task
+        .then(() => {
+          logger.info('auto_link_sections completed', { wikiId });
+        })
+        .catch((err) => {
+          logger.error('auto_link_sections failed (background)', { wikiId, error: err.message });
+        })
+        .finally(() => {
+          backgroundTasks.delete(taskKey);
+        });
+
+      return service.formatResponse({
+        message: 'Auto-linking is running in the background. Results will not be sent back.',
+      });
     } catch (err) {
       logger.error('auto_link_sections failed', { wikiId, error: err.message });
       return service.formatResponse({
-        wikiId: wikiId || '',
-        updated: 0,
-        skipped: 0,
-        total: 0,
-        dryRun,
-        results: [],
         message: '',
         error: err.message,
       });
@@ -738,6 +773,12 @@ async function shutdown() {
     totalRequests,
     tools: activeTools || 'none',
   });
+
+  // Wait for all background tasks if running
+  if (backgroundTasks.size > 0) {
+    logger.info(`Waiting for ${backgroundTasks.size} background task(s)...`);
+    await Promise.all(backgroundTasks.values());
+  }
 
   await db.pool.end();
   logger.close().then(() => process.exit(0));

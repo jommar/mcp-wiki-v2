@@ -24,7 +24,7 @@ async function getAppliedFiles() {
   return new Set(rows.map((r) => r.filename));
 }
 
-async function getSqlFiles() {
+function getSqlFiles() {
   if (!fs.existsSync(SQL_DIR)) return [];
   return fs
     .readdirSync(SQL_DIR)
@@ -45,7 +45,9 @@ export async function runMigrations() {
       await pool.query('INSERT INTO migrations (filename) VALUES ($1)', [f]);
       applied.add(f);
     }
-    logger.info('Migrations: marked existing SQL files as already applied', { count: files.length });
+    logger.info('Migrations: marked existing SQL files as already applied', {
+      count: files.length,
+    });
   }
 
   // Find and apply new files

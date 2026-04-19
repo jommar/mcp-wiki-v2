@@ -142,7 +142,9 @@ export async function importWiki(sourcePath, wikiId = null) {
     }
 
     await client.query('COMMIT');
-    logger.info(`[${resolvedWikiId}] Imported ${imported} sections, inserted ${linksInserted} links`);
+    logger.info(
+      `[${resolvedWikiId}] Imported ${imported} sections, inserted ${linksInserted} links`,
+    );
     return { wikiId: resolvedWikiId, imported, linksInserted, errors };
   } catch (err) {
     await client.query('ROLLBACK');

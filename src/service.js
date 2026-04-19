@@ -4,6 +4,7 @@
 import * as db from './db.js';
 import * as wikiImport from './import.js';
 import * as wikiExport from './export.js';
+import { logger } from '../logger.js';
 
 // Constants
 export const MAX_BATCH_KEYS = 20;
@@ -79,7 +80,7 @@ export async function searchWiki(query, wikiId, fuzzy, limit) {
   return formatResponse({ results: formattedResults, count: results.length });
 }
 
-export async function getWikiSection(key, wikiId, offset, limit) {
+export async function getWikiSection(key, wikiId, offset, limit, includeBacklinks = false) {
   const keyError = validateKey(key);
   if (keyError) {
     return formatResponse({ error: keyError });
@@ -111,6 +112,11 @@ export async function getWikiSection(key, wikiId, offset, limit) {
     logger.warn('Failed to relink section', { key: section.key, error: err.message }),
   );
 
+  let backlinks;
+  if (includeBacklinks) {
+    backlinks = await db.getBacklinks(key, wikiId || null);
+  }
+
   return formatResponse({
     key: section.key,
     title: section.title,
@@ -125,6 +131,7 @@ export async function getWikiSection(key, wikiId, offset, limit) {
     hasMore: section.hasMore,
     nextOffset: section.nextOffset,
     relatedSections,
+    ...(includeBacklinks && { backlinks }),
   });
 }
 
@@ -241,7 +248,16 @@ export async function createSection(wikiId, key, title, content, parent, tags, r
   });
 }
 
-export async function updateSection(wikiId, key, content, title, parent, tags, reason, relatedKeys) {
+export async function updateSection(
+  wikiId,
+  key,
+  content,
+  title,
+  parent,
+  tags,
+  reason,
+  relatedKeys,
+) {
   const keyError = validateKey(key);
   if (keyError) return formatResponse({ updated: false, error: keyError });
 
@@ -252,7 +268,16 @@ export async function updateSection(wikiId, key, content, title, parent, tags, r
     });
   }
 
-  const result = await db.updateSection({ wikiId, key, content, title, parent, tags, reason, relatedKeys });
+  const result = await db.updateSection({
+    wikiId,
+    key,
+    content,
+    title,
+    parent,
+    tags,
+    reason,
+    relatedKeys,
+  });
   if (result && result.key) {
     return formatResponse({
       key: result.key,
@@ -307,21 +332,20 @@ export async function exportWiki(outputDir, wikiId) {
 // ─── AUTO-LINK OPERATIONS ─────────────────────────────────────────────────────
 
 export async function autoLinkSections(wikiId, options = {}) {
-  const { minSimilarity = 0.1, maxLinks = 4, dryRun = false } = options;
+  const { minSimilarity = 0.1, maxLinks = 4 } = options;
 
   const sections = await db.getAllSectionsWithEmbeddings(wikiId || null);
   const sectionsWithEmbeddings = sections.filter((s) => s.embedding);
 
   if (sectionsWithEmbeddings.length === 0) {
-    return formatResponse({
-      updated: 0,
-      skipped: sections.length,
-      dryRun: true,
-      message: 'No sections with embeddings found. Run import_wiki first to generate embeddings.',
-    });
+    // No sections to process, just log and return
+    logger.info(
+      'autoLinkSections: No sections with embeddings found. Run import_wiki first to generate embeddings.',
+      { wikiId },
+    );
+    return;
   }
 
-  const results = [];
   let updated = 0;
   let skipped = 0;
 
@@ -342,40 +366,23 @@ export async function autoLinkSections(wikiId, options = {}) {
       continue;
     }
 
-    if (dryRun) {
-      results.push({
-        key: section.key,
-        title: section.title,
-        related: filtered.map((s) => ({ key: s.key, title: s.title, similarity: s.similarity })),
-      });
+    let inserted = 0;
+    for (const target of filtered) {
+      const ok = await db.insertSectionLink(section.wikiId, section.key, target.wikiId, target.key);
+      if (ok) inserted++;
+    }
+    if (inserted > 0) {
+      updated++;
     } else {
-      let inserted = 0;
-      for (const target of filtered) {
-        const ok = await db.insertSectionLink(section.wikiId, section.key, target.wikiId, target.key);
-        if (ok) inserted++;
-      }
-      if (inserted > 0) {
-        updated++;
-        results.push({
-          key: section.key,
-          title: section.title,
-          related: filtered.map((s) => ({ key: s.key, title: s.title, similarity: s.similarity })),
-        });
-      } else {
-        skipped++;
-      }
+      skipped++;
     }
   }
 
-  return formatResponse({
+  logger.info('autoLinkSections: Completed', {
     wikiId: wikiId || 'all',
     updated,
     skipped,
     total: sectionsWithEmbeddings.length,
-    dryRun,
-    results: results.slice(0, 50),
-    message: dryRun
-      ? `Dry run: ${results.length} sections would get related links. Set dryRun=false to apply.`
-      : `Inserted related links for ${updated} sections into section_links.`,
   });
+  return;
 }

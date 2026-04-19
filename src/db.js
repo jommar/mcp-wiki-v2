@@ -406,7 +406,15 @@ export async function validateWiki(wikiId = null) {
 /**
  * Create a new section.
  */
-export async function createSection({ wikiId, key, title, content, parent = null, tags = [], relatedKeys = [] }) {
+export async function createSection({
+  wikiId,
+  key,
+  title,
+  content,
+  parent = null,
+  tags = [],
+  relatedKeys = [],
+}) {
   // Check for existing section first to give a clear error
   const { rows: existing } = await pool.query(
     'SELECT key FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
@@ -437,10 +445,8 @@ export async function createSection({ wikiId, key, title, content, parent = null
       logger.warn('Failed to generate embedding on create', { key, error: err.message });
     }
 
-    // Insert explicit related links
-    for (const targetKey of relatedKeys) {
-      await insertSectionLink(wikiId, key, wikiId, targetKey);
-    }
+    // Auto-link based on embedding similarity
+    await relinkSection(wikiId, key);
   }
 
   return rows[0] || null;
@@ -449,7 +455,16 @@ export async function createSection({ wikiId, key, title, content, parent = null
 /**
  * Update an existing section.
  */
-export async function updateSection({ wikiId, key, content, title, parent, tags, reason, relatedKeys }) {
+export async function updateSection({
+  wikiId,
+  key,
+  content,
+  title,
+  parent,
+  tags,
+  reason,
+  relatedKeys,
+}) {
   // Check existence first
   const { rows: existing } = await pool.query(
     'SELECT key, title, content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
@@ -484,15 +499,7 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
 
   // If only relatedKeys changed, skip the UPDATE query entirely
   if (updates.length === 0) {
-    // Clear existing outgoing links
-    await pool.query(
-      `DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`,
-      [wikiId, key],
-    );
-    // Insert new links
-    for (const targetKey of relatedKeys) {
-      await insertSectionLink(wikiId, key, wikiId, targetKey);
-    }
+    await relinkSection(wikiId, key);
     return existing[0];
   }
 
@@ -534,17 +541,9 @@ export async function updateSection({ wikiId, key, content, title, parent, tags,
     }
   }
 
-  // Sync section_links if relatedKeys provided
+  // Auto-link based on embedding similarity
   if (rows.length > 0 && relatedKeys !== undefined) {
-    // Clear existing outgoing links
-    await pool.query(
-      `DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`,
-      [wikiId, key],
-    );
-    // Insert new links
-    for (const targetKey of relatedKeys) {
-      await insertSectionLink(wikiId, key, wikiId, targetKey);
-    }
+    await relinkSection(wikiId, key);
   }
 
   return rows[0] || null;
@@ -721,7 +720,7 @@ export async function getOutgoingLinks(wikiId, key) {
 /**
  * Update section content and regenerate embedding.
  */
-export async function updateSectionContent(key, wikiId, content, reason = 'auto-link') {
+export async function updateSectionContent(key, wikiId, content, _reason = 'auto-link') {
   const { rows } = await pool.query(
     `UPDATE wiki_sections
      SET content = $1, updated_at = NOW()
@@ -775,10 +774,10 @@ export async function incrementAccessCount(wikiId, key) {
  */
 export async function relinkSection(wikiId, key) {
   // Delete existing outgoing links
-  await pool.query(
-    `DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`,
-    [wikiId, key],
-  );
+  await pool.query(`DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`, [
+    wikiId,
+    key,
+  ]);
 
   // Find similar sections
   const similar = await findSimilarSections(key, wikiId, MAX_LINKS_PER_SECTION);

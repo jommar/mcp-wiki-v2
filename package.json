@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
+    "dev": "npx @modelcontextprotocol/inspector src/index.js",
     "import": "node scripts/import-wiki-to-db.js",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
