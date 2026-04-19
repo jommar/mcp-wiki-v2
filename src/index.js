@@ -35,6 +35,9 @@ const requestCounts = {
   auto_link_sections: 0,
 };
 
+// Track background tasks for graceful shutdown
+const backgroundTasks = new Map(); // wikiId -> Promise
+
 const readOnlyAnnotations = { readOnlyHint: true };
 
 const sectionRefSchema = {
@@ -711,13 +714,30 @@ server.registerTool(
     try {
       requestCounts.auto_link_sections = (requestCounts.auto_link_sections || 0) + 1;
       logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks });
-      // Run in background
-      service
-        .autoLinkSections(wikiId, { minSimilarity, maxLinks })
-        .then(() => logger.info('auto_link_sections completed', { wikiId }))
-        .catch((err) =>
-          logger.error('auto_link_sections failed (background)', { wikiId, error: err.message }),
-        );
+
+      // If already running for this wiki, reject
+      const taskKey = wikiId || 'default';
+      if (backgroundTasks.has(taskKey)) {
+        return service.formatResponse({
+          message: '',
+          error: `Auto-linking already in progress for ${taskKey}. Wait for it to complete.`,
+        });
+      }
+
+      // Run in background and track for shutdown
+      const task = service.autoLinkSections(wikiId, { minSimilarity, maxLinks });
+      backgroundTasks.set(taskKey, task);
+      task
+        .then(() => {
+          logger.info('auto_link_sections completed', { wikiId });
+        })
+        .catch((err) => {
+          logger.error('auto_link_sections failed (background)', { wikiId, error: err.message });
+        })
+        .finally(() => {
+          backgroundTasks.delete(taskKey);
+        });
+
       return service.formatResponse({
         message: 'Auto-linking is running in the background. Results will not be sent back.',
       });
@@ -748,6 +768,12 @@ async function shutdown() {
     totalRequests,
     tools: activeTools || 'none',
   });
+
+  // Wait for all background tasks if running
+  if (backgroundTasks.size > 0) {
+    logger.info(`Waiting for ${backgroundTasks.size} background task(s)...`);
+    await Promise.all(backgroundTasks.values());
+  }
 
   await db.pool.end();
   logger.close().then(() => process.exit(0));
