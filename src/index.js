@@ -509,7 +509,7 @@ server.registerTool(
         .describe(
           'Markdown content. KEEP IT SHORT AND BITE-SIZED. Maximum 3-4 bullet points or sentences per section. Do not combine multiple broad categories here.',
         ),
-      parent: z.string().optional().describe('Parent topic name'),
+      parent: z.string().describe('Parent topic name'),
       tags: z.array(z.string()).optional().describe('Tags for categorization'),
       relatedKeys: z
         .array(z.string())
