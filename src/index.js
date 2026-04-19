@@ -30,9 +30,9 @@ const requestCounts = {
   get_backlinks: 0,
   validate_wiki: 0,
   get_section_history: 0,
+  auto_link_sections: 0,
   import_wiki: 0,
   export_wiki: 0,
-  auto_link_sections: 0,
 };
 
 // Track background tasks for graceful shutdown
@@ -610,87 +610,7 @@ server.registerTool(
   },
 );
 
-// ─── IMPORT/EXPORT TOOLS ─────────────────────────────────────────────────────
-
-server.registerTool(
-  'import_wiki',
-  {
-    description:
-      'Import markdown files or a directory of markdown into the wiki database. Supports single .md files or directories. Auto-detects wiki_id from path basename unless explicitly provided.',
-    inputSchema: {
-      sourcePath: z.string().describe('Path to a .md file or directory containing .md files'),
-      wikiId: z
-        .string()
-        .optional()
-        .describe('Wiki instance ID (auto-detected from path basename if not provided)'),
-    },
-    outputSchema: {
-      wikiId: z.string().describe('Wiki instance ID that was imported into'),
-      imported: z.number().describe('Number of sections imported'),
-      linksInserted: z
-        .number()
-        .optional()
-        .describe('Number of section_links populated from **Related:** patterns'),
-      errors: z.array(z.string()).describe('List of errors for sections that failed to import'),
-      error: z.string().optional().describe('Error message if import failed entirely'),
-    },
-  },
-  async ({ sourcePath, wikiId }) => {
-    try {
-      requestCounts.import_wiki = (requestCounts.import_wiki || 0) + 1;
-      logger.info('import_wiki', { sourcePath, wikiId });
-      return await service.importWiki(sourcePath, wikiId);
-    } catch (err) {
-      logger.error('import_wiki failed', { sourcePath, error: err.message });
-      return service.formatResponse({
-        wikiId: wikiId || '',
-        imported: 0,
-        errors: [],
-        error: err.message,
-      });
-    }
-  },
-);
-
-server.registerTool(
-  'export_wiki',
-  {
-    description:
-      'Export wiki sections to markdown files. Exports all wikis by default, or a specific wiki if wikiId is provided.',
-    inputSchema: {
-      outputDir: z.string().describe('Directory to write exported markdown files to'),
-      wikiId: z
-        .string()
-        .optional()
-        .describe('Export only this wiki (exports all wikis if not provided)'),
-    },
-    outputSchema: {
-      results: z
-        .array(
-          z.object({
-            wikiId: z.string().describe('Wiki instance ID'),
-            exported: z.number().describe('Number of sections exported'),
-            filePath: z
-              .string()
-              .nullable()
-              .describe('Path to the exported file (null if no sections)'),
-          }),
-        )
-        .describe('Export results per wiki'),
-      error: z.string().optional().describe('Error message if export failed'),
-    },
-  },
-  async ({ outputDir, wikiId }) => {
-    try {
-      requestCounts.export_wiki = (requestCounts.export_wiki || 0) + 1;
-      logger.info('export_wiki', { outputDir, wikiId });
-      return await service.exportWiki(outputDir, wikiId);
-    } catch (err) {
-      logger.error('export_wiki failed', { outputDir, error: err.message });
-      return service.formatResponse({ results: [], error: err.message });
-    }
-  },
-);
+// ─── AUTO-LINK TOOL ──────────────────────────────────────────────────────────
 
 server.registerTool(
   'auto_link_sections',
@@ -752,6 +672,84 @@ server.registerTool(
         message: '',
         error: err.message,
       });
+    }
+  },
+);
+
+// ─── IMPORT TOOL ─────────────────────────────────────────────────────────────
+
+server.registerTool(
+  'import_wiki',
+  {
+    description:
+      'Import markdown files from import/staging into the wiki database. Files must have YAML frontmatter with key, parent, and title. Successful imports move to import/success, failures to import/fail. Auto-linking runs automatically after import.',
+    inputSchema: {},
+    outputSchema: {
+      total: z.number().describe('Total files processed from staging'),
+      success: z.number().describe('Number of files successfully imported'),
+      failed: z.number().describe('Number of files that failed to import'),
+      errors: z
+        .array(z.object({ file: z.string(), error: z.string() }))
+        .describe('Details of failed imports'),
+      error: z.string().optional().describe('Error message if import failed entirely'),
+    },
+  },
+  async () => {
+    try {
+      requestCounts.import_wiki = (requestCounts.import_wiki || 0) + 1;
+      logger.info('import_wiki');
+      return await service.importWiki();
+    } catch (err) {
+      logger.error('import_wiki failed', { error: err.message });
+      return service.formatResponse({
+        total: 0,
+        success: 0,
+        failed: 0,
+        errors: [],
+        error: err.message,
+      });
+    }
+  },
+);
+
+// ─── EXPORT TOOL ─────────────────────────────────────────────────────────────
+
+server.registerTool(
+  'export_wiki',
+  {
+    description:
+      'Export wiki sections to markdown files. Exports all wikis by default, or a specific wiki if wikiId is provided.',
+    inputSchema: {
+      outputDir: z.string().describe('Directory to write exported markdown files to'),
+      wikiId: z
+        .string()
+        .optional()
+        .describe('Export only this wiki (exports all wikis if not provided)'),
+    },
+    outputSchema: {
+      results: z
+        .array(
+          z.object({
+            wikiId: z.string().describe('Wiki instance ID'),
+            exported: z.number().describe('Number of sections exported'),
+            filePath: z
+              .string()
+              .nullable()
+              .describe('Path to the exported file (null if no sections)'),
+          }),
+        )
+        .describe('Export results per wiki'),
+      error: z.string().optional().describe('Error message if export failed'),
+    },
+  },
+  async ({ outputDir, wikiId }) => {
+    try {
+      requestCounts.export_wiki = (requestCounts.export_wiki || 0) + 1;
+      logger.info('export_wiki', { outputDir, wikiId });
+      return await service.exportWiki(outputDir, wikiId);
+    } catch (err) {
+      logger.error('export_wiki failed', { outputDir, error: err.message });
+      return service.formatResponse({ results: [], error: err.message });
     }
   },
 );

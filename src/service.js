@@ -2,8 +2,8 @@
 // Contains constants, validation, data transformation, and orchestration
 
 import * as db from './db.js';
-import * as wikiImport from './import.js';
 import * as wikiExport from './export.js';
+import * as wikiImport from './import.js';
 import { logger } from '../logger.js';
 
 // Constants
@@ -311,12 +311,22 @@ export async function deleteSection(wikiId, key) {
   return formatResponse({ deleted: false, error: `Section '${key}' not found in ${wikiId}` });
 }
 
-// ─── IMPORT/EXPORT OPERATIONS ───────────────────────────────────────────────────
+// ─── IMPORT OPERATIONS ────────────────────────────────────────────────────────
 
-export async function importWiki(sourcePath, wikiId) {
-  const result = await wikiImport.importWiki(sourcePath, wikiId || null);
+export async function importWiki() {
+  // Process all files in staging
+  const result = await wikiImport.processStaging();
+
+  // If any files were imported successfully, run auto-link for affected wikis
+  if (result.success > 0) {
+    logger.info('Running auto-link for all wikis after import');
+    await autoLinkSections(null);
+  }
+
   return formatResponse(result);
 }
+
+// ─── EXPORT OPERATIONS ────────────────────────────────────────────────────────
 
 export async function exportWiki(outputDir, wikiId) {
   let results;
@@ -340,7 +350,7 @@ export async function autoLinkSections(wikiId, options = {}) {
   if (sectionsWithEmbeddings.length === 0) {
     // No sections to process, just log and return
     logger.info(
-      'autoLinkSections: No sections with embeddings found. Run import_wiki first to generate embeddings.',
+      'autoLinkSections: No sections with embeddings found.',
       { wikiId },
     );
     return;

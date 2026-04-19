@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "npx @modelcontextprotocol/inspector src/index.js",
+    "export": "node scripts/export-wiki-to-md.js",
     "import": "node scripts/import-wiki-to-db.js",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",

@@ -1,23 +1,50 @@
-import { Pool } from 'pg';
 import fs from 'fs';
 import path from 'path';
+import { pool } from './db.js';
 import { logger } from '../logger.js';
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5433'),
-  user: process.env.DB_USER || 'wiki',
-  password: process.env.DB_PASSWORD || 'wiki',
-  database: process.env.DB_NAME || 'wiki',
-});
+/**
+ * Serialize a value for YAML frontmatter (simple, no external deps).
+ */
+function yamlValue(value) {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[]';
+    return `[${value.map((v) => `"${v}"`).join(', ')}]`;
+  }
+  if (typeof value === 'string') {
+    if (value.includes(':') || value.includes('#') || value.includes('"')) {
+      return `"${value.replace(/"/g, '\\"')}"`;
+    }
+    return value;
+  }
+  return String(value);
+}
 
 /**
- * Export wiki sections to a single markdown file.
- * Appends **Related:** blocks from section_links to each section.
+ * Build YAML frontmatter for a section.
+ */
+function buildFrontmatter(section) {
+  const lines = ['---'];
+  lines.push(`key: ${yamlValue(section.key)}`);
+  lines.push(`parent: ${yamlValue(section.parent || 'Root')}`);
+  lines.push(`title: ${yamlValue(section.title)}`);
+  if (section.tags && section.tags.length > 0) {
+    lines.push(`tags: ${yamlValue(section.tags)}`);
+  }
+  lines.push('---');
+  return lines.join('\n');
+}
+
+/**
+ * Export a single wiki to a markdown file.
+ * Each section includes YAML frontmatter with key, parent, title, and tags.
+ * @param {string} wikiId - Wiki instance ID
+ * @param {string} outputDir - Directory to write the file to
+ * @returns {Promise<{ wikiId: string, exported: number, filePath: string | null }>}
  */
 export async function exportWiki(wikiId, outputDir) {
   const { rows: sections } = await pool.query(
-    'SELECT key, wiki_id, parent, title, content FROM wiki_sections WHERE wiki_id = $1 ORDER BY parent, key',
+    'SELECT key, parent, title, content, tags FROM wiki_sections WHERE wiki_id = $1 ORDER BY parent, key',
     [wikiId],
   );
 
@@ -25,27 +52,8 @@ export async function exportWiki(wikiId, outputDir) {
     return { wikiId, exported: 0, filePath: null };
   }
 
-  // Fetch all outgoing links for these sections
-  const { rows: links } = await pool.query(
-    `SELECT from_key, to_key, ws.title as to_title
-     FROM section_links sl
-     JOIN wiki_sections ws ON ws.wiki_id = sl.to_wiki_id AND ws.key = sl.to_key
-     WHERE sl.from_wiki_id = $1
-     ORDER BY from_key`,
-    [wikiId],
-  );
-
-  // Group links by from_key
-  const linksBySection = new Map();
-  for (const link of links) {
-    if (!linksBySection.has(link.from_key)) linksBySection.set(link.from_key, []);
-    linksBySection.get(link.from_key).push({ key: link.to_key, title: link.to_title });
-  }
-
-  // Build one monolithic file, grouped by parent
   let content = '';
   let currentParent = null;
-  let totalWritten = 0;
 
   for (const section of sections) {
     const parent = section.parent || 'Root';
@@ -56,28 +64,22 @@ export async function exportWiki(wikiId, outputDir) {
       currentParent = parent;
     }
 
-    content += `## ${section.title} {#${section.key}}\n\n`;
+    content += buildFrontmatter(section) + '\n\n';
     content += section.content + '\n\n';
-
-    // Append **Related:** block from section_links
-    const related = linksBySection.get(section.key);
-    if (related && related.length > 0) {
-      content += `**Related:** ${related.map((r) => `[[${r.key}]]`).join(', ')}\n\n`;
-    }
-
     content += '---\n\n';
-    totalWritten++;
   }
 
   fs.mkdirSync(outputDir, { recursive: true });
   const fileName = `${wikiId}.md`;
   const filePath = path.join(outputDir, fileName);
-  fs.writeFileSync(filePath, content, 'utf8');
-  logger.info(
-    `[${wikiId}] Wrote ${fileName} (${totalWritten} sections, ${(content.length / 1024).toFixed(1)}KB)`,
-  );
+  const tmpPath = filePath + '.tmp';
 
-  return { wikiId, exported: totalWritten, filePath };
+  // Atomic write: write to temp file, then rename
+  fs.writeFileSync(tmpPath, content, 'utf8');
+  fs.renameSync(tmpPath, filePath);
+
+  logger.info(`[${wikiId}] Exported ${sections.length} sections → ${fileName}`);
+  return { wikiId, exported: sections.length, filePath };
 }
 
 /**
@@ -93,9 +95,7 @@ export async function exportAllWikis(outputDir) {
   const results = [];
   for (const { wiki_id } of wikis) {
     const result = await exportWiki(wiki_id, outputDir);
-    results.push(result);
+    if (result.exported > 0) results.push(result);
   }
   return results;
 }
-
-export { pool };

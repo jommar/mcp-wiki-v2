@@ -1,46 +1,42 @@
 import { config } from 'dotenv';
-import { importWiki } from '../src/import.js';
+import { processStaging } from '../src/import.js';
+import { autoLinkSections } from '../src/service.js';
 import { pool } from '../src/db.js';
 
 config();
 
-// Parse WIKI_SOURCES env var (comma-separated paths)
-const WIKI_SOURCES = (process.env.WIKI_SOURCES || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-
 async function main() {
-  if (WIKI_SOURCES.length === 0) {
-    console.error(
-      'Error: WIKI_SOURCES env var not set. Example: WIKI_SOURCES=/ai/wiki,/home/dev/transAct/docs',
-    );
-    process.exit(1);
-  }
+  console.log('\nWiki V2 Import — Processing staging directory\n');
 
-  console.log(`\nWiki V2 Import — ${WIKI_SOURCES.length} source(s)\n`);
+  const result = await processStaging();
 
-  let totalImported = 0;
-  for (const sourcePath of WIKI_SOURCES) {
-    const result = await importWiki(sourcePath);
-    totalImported += result.imported;
-    if (result.errors.length > 0) {
-      console.log(`  Errors: ${result.errors.length}`);
+  console.log(`Total:   ${result.total}`);
+  console.log(`Success: ${result.success}`);
+  console.log(`Failed:  ${result.failed}`);
+
+  if (result.errors.length > 0) {
+    console.log('\nErrors:');
+    for (const { file, error } of result.errors) {
+      console.log(`  ${file}: ${error}`);
     }
   }
 
+  if (result.success > 0) {
+    console.log('\nRunning auto-link for all wikis...');
+    await autoLinkSections(null);
+    console.log('Auto-link complete.');
+  }
+
+  // Show DB stats
   const { rows: stats } = await pool.query(
     'SELECT wiki_id, COUNT(*) as count FROM wiki_sections GROUP BY wiki_id ORDER BY wiki_id',
   );
-  console.log('\nVerification:');
+  console.log('\nWiki stats:');
   for (const row of stats) {
     console.log(`  ${row.wiki_id}: ${row.count} sections`);
   }
 
-  const dbTotal = stats.reduce((sum, r) => sum + parseInt(r.count), 0);
-  console.log(`\nTotal in DB: ${dbTotal} sections`);
-  console.log(`Import complete: ${totalImported} sections processed\n`);
-
+  console.log('\nDone\n');
   await pool.end();
 }
 
