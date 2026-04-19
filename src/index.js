@@ -707,9 +707,7 @@ server.registerTool(
       error: z.string().optional().describe('Error message if request failed'),
     }),
   },
-  async ({ wikiId, minSimilarity, maxLinks }) => {
-    // Note: intentionally not awaiting background operation
-    await null;
+  ({ wikiId, minSimilarity, maxLinks }) => {
     try {
       requestCounts.auto_link_sections = (requestCounts.auto_link_sections || 0) + 1;
       logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks });
