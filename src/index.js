@@ -720,16 +720,16 @@ server.registerTool(
     try {
       requestCounts.auto_link_sections = (requestCounts.auto_link_sections || 0) + 1;
       logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks, dryRun });
-      return await service.autoLinkSections(wikiId, { minSimilarity, maxLinks, dryRun });
+      // Run in background
+      service.autoLinkSections(wikiId, { minSimilarity, maxLinks, dryRun })
+        .then(() => logger.info('auto_link_sections completed', { wikiId }))
+        .catch((err) => logger.error('auto_link_sections failed (background)', { wikiId, error: err.message }));
+      return service.formatResponse({
+        message: 'Auto-linking is running in the background. Results will not be sent back.'
+      });
     } catch (err) {
       logger.error('auto_link_sections failed', { wikiId, error: err.message });
       return service.formatResponse({
-        wikiId: wikiId || '',
-        updated: 0,
-        skipped: 0,
-        total: 0,
-        dryRun,
-        results: [],
         message: '',
         error: err.message,
       });
