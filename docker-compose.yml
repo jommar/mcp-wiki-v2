@@ -19,5 +19,23 @@ services:
       retries: 5
     restart: unless-stopped
 
+  wiki-server:
+    image: node:20-slim
+    container_name: wiki-v2-server
+    working_dir: /home/dev/mcp/wiki-v2
+    volumes:
+      - .:/home/dev/mcp/wiki-v2
+    environment:
+      DB_HOST: wiki-db
+      DB_PORT: 5432
+      DB_USER: wiki
+      DB_PASSWORD: wiki
+      DB_NAME: wiki
+    depends_on:
+      wiki-db:
+        condition: service_healthy
+    command: tail -f /dev/null
+    restart: unless-stopped
+
 volumes:
   wiki-data:
