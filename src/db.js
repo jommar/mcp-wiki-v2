@@ -445,10 +445,8 @@ export async function createSection({
       logger.warn('Failed to generate embedding on create', { key, error: err.message });
     }
 
-    // Insert explicit related links
-    for (const targetKey of relatedKeys) {
-      await insertSectionLink(wikiId, key, wikiId, targetKey);
-    }
+    // Auto-link based on embedding similarity
+    await relinkSection(wikiId, key);
   }
 
   return rows[0] || null;
@@ -501,15 +499,7 @@ export async function updateSection({
 
   // If only relatedKeys changed, skip the UPDATE query entirely
   if (updates.length === 0) {
-    // Clear existing outgoing links
-    await pool.query(`DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`, [
-      wikiId,
-      key,
-    ]);
-    // Insert new links
-    for (const targetKey of relatedKeys) {
-      await insertSectionLink(wikiId, key, wikiId, targetKey);
-    }
+    await relinkSection(wikiId, key);
     return existing[0];
   }
 
@@ -551,17 +541,9 @@ export async function updateSection({
     }
   }
 
-  // Sync section_links if relatedKeys provided
+  // Auto-link based on embedding similarity
   if (rows.length > 0 && relatedKeys !== undefined) {
-    // Clear existing outgoing links
-    await pool.query(`DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`, [
-      wikiId,
-      key,
-    ]);
-    // Insert new links
-    for (const targetKey of relatedKeys) {
-      await insertSectionLink(wikiId, key, wikiId, targetKey);
-    }
+    await relinkSection(wikiId, key);
   }
 
   return rows[0] || null;

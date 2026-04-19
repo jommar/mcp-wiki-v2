@@ -498,12 +498,17 @@ server.registerTool(
 server.registerTool(
   'create_section',
   {
-    description: 'Create a new wiki section.',
+    description:
+      'Create a new bite-sized wiki section. CRITICAL: Break large topics down into atomic, highly specific concepts. (e.g., Instead of one "Tech Stack" section, create separate sections for "Frontend", "Backend", and "Infrastructure").',
     inputSchema: {
       wikiId: z.string().describe('Wiki instance ID (e.g., "user-wiki", "transact-wiki")'),
       key: z.string().describe('Unique slug key (lowercase alphanumeric with hyphens)'),
       title: z.string().describe('Display title'),
-      content: z.string().describe('Markdown content'),
+      content: z
+        .string()
+        .describe(
+          'Markdown content. KEEP IT SHORT AND BITE-SIZED. Maximum 3-4 bullet points or sentences per section. Do not combine multiple broad categories here.',
+        ),
       parent: z.string().optional().describe('Parent topic name'),
       tags: z.array(z.string()).optional().describe('Tags for categorization'),
       relatedKeys: z
