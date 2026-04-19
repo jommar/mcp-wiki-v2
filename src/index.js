@@ -670,7 +670,7 @@ server.registerTool(
   'auto_link_sections',
   {
     description:
-      'Automatically find related sections using vector embeddings and append **Related:** [[key]] blocks to sections that lack them. Uses cosine similarity on stored embeddings. Run dryRun=true first to preview changes without modifying content.',
+      'Automatically find related sections using vector embeddings and append **Related:** [[key]] blocks to sections that lack them. Uses cosine similarity on stored embeddings. This endpoint always runs in the background and returns only a status message. Results are never returned directly.',
     inputSchema: {
       wikiId: z.string().optional().describe('Wiki instance ID to process'),
       minSimilarity: z
@@ -683,45 +683,19 @@ server.registerTool(
         .optional()
         .default(4)
         .describe('Maximum number of related links per section (default 4)'),
-      dryRun: z
-        .boolean()
-        .optional()
-        .default(true)
-        .describe('Preview mode — show what would change without modifying content'),
+      
     },
-    outputSchema: {
-      wikiId: z.string().describe('Wiki instance ID that was processed'),
-      updated: z.number().describe('Number of sections updated'),
-      skipped: z.number().describe('Number of sections skipped (already have links or no match)'),
-      total: z.number().describe('Total sections with embeddings'),
-      dryRun: z.boolean().describe('Whether this was a dry run'),
-      results: z
-        .array(
-          z.object({
-            key: z.string().describe('Section key'),
-            title: z.string().describe('Section title'),
-            related: z
-              .array(
-                z.object({
-                  key: z.string().describe('Related section key'),
-                  title: z.string().describe('Related section title'),
-                  similarity: z.number().describe('Cosine similarity score'),
-                }),
-              )
-              .describe('Related sections that would be/were linked'),
-          }),
-        )
-        .describe('Details of updated sections (max 50)'),
-      message: z.string().describe('Summary message'),
-      error: z.string().optional().describe('Error message if request failed'),
-    },
+    outputSchema: z.object({
+  message: z.string().describe('Status message'),
+  error: z.string().optional().describe('Error message if request failed'),
+}),
   },
-  async ({ wikiId, minSimilarity, maxLinks, dryRun }) => {
+  async ({ wikiId, minSimilarity, maxLinks }) => {
     try {
       requestCounts.auto_link_sections = (requestCounts.auto_link_sections || 0) + 1;
-      logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks, dryRun });
+      logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks });
       // Run in background
-      service.autoLinkSections(wikiId, { minSimilarity, maxLinks, dryRun })
+      service.autoLinkSections(wikiId, { minSimilarity, maxLinks })
         .then(() => logger.info('auto_link_sections completed', { wikiId }))
         .catch((err) => logger.error('auto_link_sections failed (background)', { wikiId, error: err.message }));
       return service.formatResponse({
