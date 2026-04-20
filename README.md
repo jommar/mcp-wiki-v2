@@ -1,6 +1,6 @@
 # Wiki Explorer V2
 
-MCP server for wiki management backed by PostgreSQL. Replaces the file-based wiki parser with a database-backed system supporting full-text search, vector embeddings, write operations, backlinks, and version history.
+MCP server for wiki management backed by PostgreSQL. Supports semantic search, vector embeddings, write operations, auto-backlinks, access tracking, and version history.
 
 ## Architecture
 
@@ -9,7 +9,20 @@ MCP server for wiki management backed by PostgreSQL. Replaces the file-based wik
 │  MCP Client │────▶│  wiki-v2 Server  │────▶│  PostgreSQL 16  │
 │  (OpenCode) │◀────│  (Node.js)       │◀────│  + pgvector     │
 └─────────────┘     └──────────────────┘     └─────────────────┘
+                           │
+                    ┌──────┴──────┐
+                    │  wiki-cron  │  Daily auto-relink at 3am
+                    └─────────────┘
 ```
+
+### Code Architecture
+
+- **`src/index.js`** — MCP server controller (tool registration, request routing)
+- **`src/service.js`** — Business logic (validation, data transformation, orchestration)
+- **`src/db.js`** — Database queries and connection pooling
+- **`src/migrate.js`** — Forward-only migration runner (auto-runs on startup)
+- **`src/embedding.js`** — Lazy-loaded `@xenova/transformers` embedding model
+- **`src/import.js`** / **`src/export.js`** — Markdown import/export logic
 
 ## Quick Start
 
@@ -26,16 +39,35 @@ npm run init  # Set up pre-commit hook for lint + format
 docker-compose up -d
 ```
 
+This starts 3 containers:
+- **wiki-db** — PostgreSQL 16 with pgvector (port 5433)
+- **wiki-server** — Node.js server (volume-mounted for live editing)
+- **wiki-cron** — Daily auto-relink job at 3am
+
+On first start, migrations in `sql/` are auto-applied by the migration runner.
+
 ### 3. Import existing markdown files
 
+Place markdown files with YAML frontmatter into `import/staging/`, then:
+
 ```bash
-WIKI_SOURCES=/ai/wiki,/home/dev/transAct/docs node scripts/import-wiki-to-db.js
+# Via MCP tool (recommended)
+# Use import_wiki tool from your MCP client
+
+# Or via CLI script
+node scripts/import-wiki-to-db.js
 ```
 
 ### 4. Start the MCP server
 
 ```bash
-node src/index.js
+npm start
+```
+
+Or use MCP inspector for debugging:
+
+```bash
+npm run dev
 ```
 
 Or configure your MCP client:
@@ -60,79 +92,89 @@ Or configure your MCP client:
 
 ## MCP Tools
 
-### Read Tools
+### Discovery
+
+| Tool              | Description                                                    |
+| ----------------- | -------------------------------------------------------------- |
+| `get_wiki_info`   | Get wiki instance metadata and section counts                  |
+| `browse_wiki`     | Browse sections grouped by parent topic                        |
+| `list_wiki`       | List all sections, optionally filtered by `wikiId` and `limit` |
+
+### Reading
 
 | Tool                | Description                                                                  |
 | ------------------- | ---------------------------------------------------------------------------- |
-| `list_wiki`         | List all sections, optionally filtered by `wikiId`                           |
-| `browse_wiki`       | Browse sections grouped by parent topic                                      |
 | `search_wiki`       | Semantic search by meaning (falls back to keyword if embeddings unavailable) |
-| `get_wiki_section`  | Get a single section with content pagination                                 |
-| `get_wiki_sections` | Batch retrieve multiple sections                                             |
-| `get_wiki_info`     | Get wiki instance metadata and section counts                                |
+| `get_wiki_section`  | Get a single section with content pagination; `includeBacklinks` optional    |
+| `get_wiki_sections` | Batch retrieve multiple sections (max 20 at once)                            |
 
-### Write Tools
+### Writing
 
 | Tool             | Description                                                                   |
 | ---------------- | ----------------------------------------------------------------------------- |
-| `create_section` | Create a new wiki section (embedding auto-generated)                          |
+| `create_section` | Create a new wiki section (embedding auto-generated, `parent` required)       |
 | `update_section` | Update an existing section (embedding auto-regenerated, history auto-tracked) |
 | `delete_section` | Delete a section and its backlinks                                            |
 
-### Import/Export Tools
+### Import/Export
 
 | Tool          | Description                                                      |
 | ------------- | ---------------------------------------------------------------- |
-| `import_wiki` | Import markdown files or directories (embeddings auto-generated) |
+| `import_wiki` | Import markdown files from `import/staging/` (embeddings auto-generated) |
 | `export_wiki` | Export wiki sections to markdown files                           |
 
-### Management Tools
+### Management
 
-| Tool                  | Description                                 |
-| --------------------- | ------------------------------------------- |
-| `get_backlinks`       | Find sections that link to a given section  |
-| `validate_wiki`       | Find empty, orphaned, and unlinked sections |
-| `get_section_history` | View edit history for a section             |
+| Tool                   | Description                                                    |
+| ---------------------- | -------------------------------------------------------------- |
+| `get_backlinks`        | Find sections that link to a given section                     |
+| `validate_wiki`        | Find empty, orphaned, and unlinked sections                    |
+| `get_section_history`  | View edit history for a section                                |
+| `auto_link_sections`   | Auto-link sections via embedding similarity (background job)   |
+
+### `auto_link_sections` Options
+
+| Option      | Description                                              |
+| ----------- | -------------------------------------------------------- |
+| `override`  | Re-link sections that already have links                 |
+| `reembed`   | Regenerate embeddings before linking                     |
+| `parallel`  | Process sections in parallel (default: true)             |
+| `minSimilarity` | Minimum cosine similarity threshold (0-1, default 0.1) |
+| `maxLinks`  | Maximum number of related links per section (default 4)  |
+
+This tool runs in the background and returns an immediate status message. A cron job also runs it daily at 3am via the `wiki-cron` container.
 
 ## Scripts
 
-| Script                           | Purpose                                        |
-| -------------------------------- | ---------------------------------------------- |
-| `scripts/import-wiki-to-db.js`   | Import markdown files → PostgreSQL             |
-| `scripts/export-wiki-to-md.js`   | Export PostgreSQL → markdown files             |
-| `scripts/generate-embeddings.js` | Generate vector embeddings for semantic search |
+| Script                          | Purpose                                        |
+| ------------------------------- | ---------------------------------------------- |
+| `npm start`                     | Start the MCP server                           |
+| `npm run dev`                   | Start with MCP inspector for debugging         |
+| `npm run import`                | Import markdown from `import/staging/`         |
+| `npm run export`                | Export all wikis to `export/` directory        |
+| `npm run db:up`                 | Start database via docker-compose              |
+| `npm run db:down`               | Stop database via docker-compose               |
+| `npm run lint` / `lint:fix`     | Run ESLint                                     |
+| `npm run format` / `format:check` | Run Prettier                                 |
+| `npm run check`                 | Run lint + format check                        |
+| `npm run fix`                   | Run lint:fix + format                          |
+| `npm run init`                  | Install pre-commit hook                        |
+| `npm test`                      | Run test suite                                 |
 
-### Import
+### Import Directory Structure
 
-```bash
-# Import from source directories
-WIKI_SOURCES=/ai/wiki,/home/dev/transAct/docs node scripts/import-wiki-to-db.js
-
-# Import from staging directory (mounted as /import in Docker)
-WIKI_SOURCES=/import/user-wiki,/import/transact-wiki node scripts/import-wiki-to-db.js
+```
+import/
+├── staging/    ← Place markdown files here for import
+├── success/    ← Successfully imported files are moved here
+└── fail/       ← Failed imports are moved here with error info
 ```
 
-### Export
-
-```bash
-# Export all wikis
-node scripts/export-wiki-to-md.js
-
-# Export single wiki
-node scripts/export-wiki-to-md.js --wiki user-wiki
-
-# Custom output directory
-node scripts/export-wiki-to-md.js --output /tmp/wiki-export
-```
+Files in `staging/` must have YAML frontmatter with `key`, `parent`, and `title`.
 
 ### Embeddings
 
-Embeddings are generated automatically on every write operation (create, update, import).
-The batch script is only needed for seeding existing sections that lack embeddings:
-
-```bash
-node scripts/generate-embeddings.js
-```
+Embeddings are generated automatically on every write operation (create, update, import). No manual seeding is needed.
 
 Uses `@xenova/transformers` with `all-MiniLM-L6-v2` (384-dim, quantized) — runs locally with no API key required.
 
@@ -140,26 +182,48 @@ Uses `@xenova/transformers` with `all-MiniLM-L6-v2` (384-dim, quantized) — run
 
 | Table             | Purpose                                                                  |
 | ----------------- | ------------------------------------------------------------------------ |
-| `wiki_sections`   | Main content table with FTS and vector columns                           |
-| `section_links`   | Backlinks between sections (auto-populated from `[[wiki-key]]` patterns) |
+| `wiki_sections`   | Main content table with FTS, vector, and access tracking columns         |
+| `section_links`   | Canonical source of truth for wiki relationships (auto-populated)        |
 | `section_history` | Version history (auto-populated on updates)                              |
+| `migrations`      | Tracks applied migration files                                           |
+
+### `wiki_sections` Columns
+
+| Column           | Type        | Description                                    |
+| ---------------- | ----------- | ---------------------------------------------- |
+| `key`            | VARCHAR     | Unique slug key (PK)                           |
+| `wiki_id`        | VARCHAR     | Wiki instance ID                               |
+| `title`          | VARCHAR     | Display title                                  |
+| `parent`         | VARCHAR     | Parent topic/group                             |
+| `content`        | TEXT        | Markdown content                               |
+| `tags`           | TEXT[]      | Category tags                                  |
+| `embedding`      | vector(384) | Semantic embedding (auto-generated)            |
+| `search_vector`  | tsvector    | Full-text search index (auto-populated)        |
+| `access_count`   | INT         | Read count (capped at 9999)                    |
+| `last_accessed`  | TIMESTAMPTZ | Last read timestamp                            |
+| `created_at`     | TIMESTAMPTZ | Creation timestamp                             |
+| `updated_at`     | TIMESTAMPTZ | Last update timestamp                          |
 
 ### Key Features
 
 - **Full-text search**: `tsvector` column with weighted ranking (title > content > tags)
 - **Fuzzy search**: pg_trigram similarity for typo tolerance
 - **Vector search**: 384-dim embeddings via pgvector (HNSW index)
-- **Auto-backlinks**: Trigger extracts `[[wiki-key]]` patterns on insert/update
+- **Auto-backlinks**: `section_links` table is the canonical source of truth, populated via `relatedKeys` param and `auto_link_sections`
 - **Auto-history**: Trigger logs content changes with timestamps
 - **Auto-search-vector**: Trigger populates FTS index on insert/update
+- **Access tracking**: `access_count` and `last_accessed` updated on every read
+- **Background auto-relink**: Sections are re-linked via embedding similarity on read and via daily cron
 
-## Migration from V1
+## Migrations
 
-V1 (`/home/dev/mcp/wiki/`) uses file-based parsing. V2 uses PostgreSQL. Both can coexist during transition.
+Migrations live in `sql/` and are auto-applied on server startup by `src/migrate.js`:
 
-1. V2 imports from the same markdown files V1 reads
-2. V2 adds write capabilities that V1 doesn't have
-3. V2 exports back to markdown for git tracking or external use
+- **`001_initial_schema.sql`** — Core tables, triggers, extensions
+- **`002_access_tracking.sql`** — Adds `access_count` and `last_accessed` columns
+- **`003_foreign_key_cascade.sql`** — Adds cascade deletes for relationships
+
+The migration runner creates a `migrations` table to track applied files. On first run, it marks existing SQL files as already applied (compatible with `docker-entrypoint-initdb.d`).
 
 ## Environment Variables
 
@@ -172,4 +236,11 @@ V1 (`/home/dev/mcp/wiki/`) uses file-based parsing. V2 uses PostgreSQL. Both can
 | `DB_NAME`      | `wiki`                  | Database name                             |
 | `LOG_LEVEL`    | `info`                  | Log level (debug, info, warn, error)      |
 | `LOG_DIR`      | `logs`                  | Log directory                             |
-| `WIKI_SOURCES` | _(required for import)_ | Comma-separated paths to markdown sources |
+
+## Migration from V1
+
+V1 (`/home/dev/mcp/wiki/`) uses file-based parsing. V2 uses PostgreSQL. Both can coexist during transition.
+
+1. V2 imports from the same markdown files V1 reads
+2. V2 adds write capabilities that V1 doesn't have
+3. V2 exports back to markdown for git tracking or external use
