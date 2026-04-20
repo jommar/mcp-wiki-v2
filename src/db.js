@@ -619,36 +619,29 @@ export async function findSimilar(query, wikiId = null, maxResults = 5) {
  * Returns the top N most similar sections (excluding self).
  */
 export async function findSimilarSections(key, wikiId = null, limit = 4) {
-  const params = [key];
-  let whereClause = 'WHERE s.key = $1';
-  if (wikiId) {
-    whereClause += ' AND s.wiki_id = $2';
-    params.push(wikiId);
-  }
-
-  // First get the embedding for the target section
-  const { rows: targetRows } = await pool.query(
-    `SELECT key, wiki_id, embedding FROM wiki_sections s ${whereClause}`,
-    params,
-  );
-  if (targetRows.length === 0 || !targetRows[0].embedding) return [];
-
-  const targetEmbedding = targetRows[0].embedding;
-  const targetWikiId = targetRows[0].wiki_id;
-
-  // Find most similar sections using cosine distance
   const { rows } = await pool.query(
     `
-    SELECT key, wiki_id, parent, title,
-           1 - (embedding <=> $1) as similarity
-    FROM wiki_sections
-    WHERE wiki_id = $2
-      AND key != $3
-      AND embedding IS NOT NULL
-    ORDER BY embedding <=> $1
-    LIMIT $4
+    WITH target_section AS (
+      SELECT embedding, wiki_id 
+      FROM wiki_sections 
+      WHERE key = $1 
+        ${wikiId ? 'AND wiki_id = $2' : ''}
+      LIMIT 1
+    )
+    SELECT 
+      s.key, 
+      s.wiki_id, 
+      s.parent, 
+      s.title,
+      1 - (s.embedding <=> t.embedding) as similarity
+    FROM wiki_sections s
+    JOIN target_section t ON s.wiki_id = t.wiki_id
+    WHERE s.key != $1
+      AND s.embedding IS NOT NULL
+    ORDER BY s.embedding <=> t.embedding
+    LIMIT $${wikiId ? '3' : '2'}
   `,
-    [targetEmbedding, targetWikiId, key, limit],
+    wikiId ? [key, wikiId, limit] : [key, limit],
   );
 
   return rows.map((r) => ({
