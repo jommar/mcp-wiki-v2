@@ -629,16 +629,30 @@ server.registerTool(
         .optional()
         .default(4)
         .describe('Maximum number of related links per section (default 4)'),
+      override: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Re-link sections that already have links'),
+      reembed: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('Regenerate embeddings before linking'),
+      parallel: z
+        .boolean()
+        .optional()
+        .describe('Process sections in parallel (default: true)'),
     },
     outputSchema: z.object({
       message: z.string().describe('Status message'),
       error: z.string().optional().describe('Error message if request failed'),
     }),
   },
-  ({ wikiId, minSimilarity, maxLinks }) => {
+  ({ wikiId, minSimilarity, maxLinks, override, reembed, parallel }) => {
     try {
       requestCounts.auto_link_sections = (requestCounts.auto_link_sections || 0) + 1;
-      logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks });
+      logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks, override, reembed, parallel });
 
       // If already running for this wiki, reject
       const taskKey = wikiId || 'default';
@@ -650,7 +664,7 @@ server.registerTool(
       }
 
       // Run in background and track for shutdown
-      const task = service.autoLinkSections(wikiId, { minSimilarity, maxLinks });
+      const task = service.autoLinkSections(wikiId, { minSimilarity, maxLinks, override, reembed, parallel });
       backgroundTasks.set(taskKey, task);
       task
         .then(() => {

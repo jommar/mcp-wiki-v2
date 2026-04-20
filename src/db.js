@@ -718,6 +718,28 @@ export async function getOutgoingLinks(wikiId, key) {
 }
 
 /**
+ * Clear all outgoing links for a section (used when re-linking with override).
+ */
+export async function clearOutgoingLinks(wikiId, key) {
+  const { rowCount } = await pool.query(
+    'DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2',
+    [wikiId, key],
+  );
+  return rowCount;
+}
+
+/**
+ * Update section embedding without changing content.
+ */
+export async function updateSectionEmbedding(wikiId, key, embedding) {
+  const { rowCount } = await pool.query(
+    'UPDATE wiki_sections SET embedding = $1 WHERE wiki_id = $2 AND key = $3',
+    [JSON.stringify(embedding), wikiId, key],
+  );
+  return rowCount;
+}
+
+/**
  * Update section content and regenerate embedding.
  */
 export async function updateSectionContent(key, wikiId, content, _reason = 'auto-link') {

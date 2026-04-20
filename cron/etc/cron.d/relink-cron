@@ -1,0 +1,2 @@
+# Relink all sections every day at 3am
+0 3 * * * cd /home/dev/mcp/wiki-v2 && node scripts/relink-all-sections.js >> /home/dev/mcp/wiki-v2/logs/cron-relink.log 2>&1

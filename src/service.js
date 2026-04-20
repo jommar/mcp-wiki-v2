@@ -5,6 +5,7 @@ import * as db from './db.js';
 import * as wikiExport from './export.js';
 import * as wikiImport from './import.js';
 import { logger } from '../logger.js';
+import { getEmbedding } from './embedding.js';
 
 // Constants
 export const MAX_BATCH_KEYS = 20;
@@ -341,50 +342,94 @@ export async function exportWiki(outputDir, wikiId) {
 
 // ─── AUTO-LINK OPERATIONS ─────────────────────────────────────────────────────
 
+async function processSectionLinks(section, wikiId, options) {
+  const { minSimilarity, maxLinks, override, reembed } = options;
+
+  // Regenerate embedding if requested
+  if (reembed) {
+    try {
+      const embedding = await getEmbedding(
+        `${section.title}\n${section.content.slice(0, 2000)}`,
+      );
+      await db.updateSectionEmbedding(section.wikiId, section.key, embedding);
+    } catch (err) {
+      logger.warn('processSectionLinks: Failed to re-embed', {
+        key: section.key,
+        error: err.message,
+      });
+    }
+  }
+
+  // Clear existing links if override is true
+  if (override) {
+    await db.clearOutgoingLinks(section.wikiId, section.key);
+  } else {
+    // Skip if already has outgoing links (only when not overriding)
+    const existingLinks = await db.getOutgoingLinks(section.wikiId, section.key);
+    if (existingLinks.length > 0) {
+      return { skipped: 1, updated: 0 };
+    }
+  }
+
+  // Find similar sections using embeddings
+  const similar = await db.findSimilarSections(section.key, wikiId, maxLinks + 2);
+  const filtered = similar.filter((s) => s.similarity >= minSimilarity).slice(0, maxLinks);
+
+  if (filtered.length < 2) {
+    return { skipped: 1, updated: 0 };
+  }
+
+  let inserted = 0;
+  for (const target of filtered) {
+    const ok = await db.insertSectionLink(section.wikiId, section.key, target.wikiId, target.key);
+    if (ok) inserted++;
+  }
+
+  return inserted > 0 ? { skipped: 0, updated: 1 } : { skipped: 1, updated: 0 };
+}
+
 export async function autoLinkSections(wikiId, options = {}) {
-  const { minSimilarity = 0.1, maxLinks = 4 } = options;
+  const { minSimilarity = 0.1, maxLinks = 4, override = false, parallel = true, reembed = false } = options;
 
   const sections = await db.getAllSectionsWithEmbeddings(wikiId || null);
   const sectionsWithEmbeddings = sections.filter((s) => s.embedding);
 
   if (sectionsWithEmbeddings.length === 0) {
-    // No sections to process, just log and return
-    logger.info(
-      'autoLinkSections: No sections with embeddings found.',
-      { wikiId },
-    );
+    logger.info('autoLinkSections: No sections with embeddings found.', { wikiId });
     return;
   }
 
   let updated = 0;
   let skipped = 0;
 
-  for (const section of sectionsWithEmbeddings) {
-    // Skip if already has outgoing links
-    const existingLinks = await db.getOutgoingLinks(section.wikiId, section.key);
-    if (existingLinks.length > 0) {
-      skipped++;
-      continue;
+  if (parallel) {
+    // Process in parallel using Promise.all
+    const results = await Promise.all(
+      sectionsWithEmbeddings.map((section) =>
+        processSectionLinks(section, wikiId, { minSimilarity, maxLinks, override, reembed }).catch((err) => {
+          logger.warn('autoLinkSections: Error processing section', {
+            key: section.key,
+            error: err.message,
+          });
+          return { skipped: 1, updated: 0 };
+        }),
+      ),
+    );
+    for (const result of results) {
+      updated += result.updated;
+      skipped += result.skipped;
     }
-
-    // Find similar sections
-    const similar = await db.findSimilarSections(section.key, wikiId, maxLinks + 2);
-    const filtered = similar.filter((s) => s.similarity >= minSimilarity).slice(0, maxLinks);
-
-    if (filtered.length < 2) {
-      skipped++;
-      continue;
-    }
-
-    let inserted = 0;
-    for (const target of filtered) {
-      const ok = await db.insertSectionLink(section.wikiId, section.key, target.wikiId, target.key);
-      if (ok) inserted++;
-    }
-    if (inserted > 0) {
-      updated++;
-    } else {
-      skipped++;
+  } else {
+    // Process sequentially
+    for (const section of sectionsWithEmbeddings) {
+      const result = await processSectionLinks(section, wikiId, {
+        minSimilarity,
+        maxLinks,
+        override,
+        reembed,
+      });
+      updated += result.updated;
+      skipped += result.skipped;
     }
   }
 
@@ -393,6 +438,9 @@ export async function autoLinkSections(wikiId, options = {}) {
     updated,
     skipped,
     total: sectionsWithEmbeddings.length,
+    override,
+    reembed,
+    parallel,
   });
   return;
 }

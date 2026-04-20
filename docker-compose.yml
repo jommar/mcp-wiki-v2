@@ -21,6 +21,7 @@ services:
 
   wiki-server:
     build: .
+    user: "${UID:-1000}:${GID:-1000}"
     container_name: wiki-v2-server
     working_dir: /home/dev/mcp/wiki-v2
     volumes:
@@ -35,6 +36,25 @@ services:
       wiki-db:
         condition: service_healthy
     command: tail -f /dev/null
+    restart: unless-stopped
+
+  wiki-cron:
+    build: .
+    user: "root"
+    container_name: wiki-v2-cron
+    working_dir: /home/dev/mcp/wiki-v2
+    volumes:
+      - .:/home/dev/mcp/wiki-v2
+    environment:
+      DB_HOST: wiki-db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-wiki}
+      DB_PASSWORD: ${DB_PASSWORD:-wiki}
+      DB_NAME: ${DB_NAME:-wiki}
+    depends_on:
+      wiki-db:
+        condition: service_healthy
+    command: sh -c "crontab /etc/cron.d/relink-cron && cron && tail -f /dev/null"
     restart: unless-stopped
 
 volumes:
