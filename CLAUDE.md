@@ -21,12 +21,14 @@ Never guess a key. If search returns nothing, say so — don't fabricate.
 
 ### 0.2 Writing: Search Before You Write
 
-**#1 mistake is duplicates.** Before every `create_section`:
+**#1 mistake is duplicates.** Before every `create_section` or `create_sections`:
 
 1. `search_wiki` in natural language.
 2. Retry with alternate phrasings (e.g., "approval workflow" → "sign-off routing").
 3. Related section exists → `update_section`.
 4. Existing section too broad → create bite-sized + link via `relatedKeys`.
+
+Creating 2+ related sections at once → use `create_sections` (max 20); all created sections are automatically linked to each other after creation.
 
 Only create for genuinely new, distinct topics.
 
@@ -54,6 +56,8 @@ Good: `approval-routing`, `approval-notifications`, `approval-escalations`, `app
 - 2–4 links per section. More is noise; fewer is isolation.
 - On update, reconsider links — stale links are worse than none.
 - `auto_link_sections` is a backstop, not a substitute for thoughtful linking.
+- `create_sections` auto-links all batch-created sections to each other — still set `relatedKeys` to link them to *existing* sections.
+- Safety net: sections with no outgoing links are auto-linked on first read via embeddings. Don't rely on this — it fires only once per orphan.
 
 ### 0.6 Updates and History
 
@@ -80,7 +84,8 @@ Run `validate_wiki` after batch creates/imports, on a new wiki, or periodically 
 ### 0.10 Token Economy
 
 - Metadata tools (`search_wiki`, `browse_wiki`) before content tools (`get_wiki_section`).
-- Batch with `get_wiki_sections`, don't loop.
+- Batch reads with `get_wiki_sections` (max 20), don't loop.
+- Batch creates with `create_sections` (max 20), don't loop `create_section`.
 - Respect default limits; paginate instead of requesting everything.
 - Use `search_wiki` snippets before fetching full content.
 
