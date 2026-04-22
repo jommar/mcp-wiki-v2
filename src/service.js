@@ -208,16 +208,11 @@ export async function getSectionHistory(wikiId, key, limit) {
 
 export async function createSection(wikiId, key, title, content, parent, tags, relatedKeys) {
   const keyError = validateKey(key);
-  if (keyError) return formatResponse({ created: false, error: keyError });
+  if (keyError) throw new Error(keyError);
 
-  if (!content || !content.trim()) {
-    return formatResponse({ created: false, error: 'Content cannot be empty' });
-  }
+  if (!content || !content.trim()) throw new Error('Content cannot be empty');
   if (content.length > MAX_CONTENT_SIZE) {
-    return formatResponse({
-      created: false,
-      error: `Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})`,
-    });
+    throw new Error(`Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})`);
   }
 
   const result = await db.createSection({
@@ -238,15 +233,9 @@ export async function createSection(wikiId, key, title, content, parent, tags, r
     });
   }
   if (result && result.exists) {
-    return formatResponse({
-      created: false,
-      error: `Section '${key}' already exists in ${wikiId}`,
-    });
+    throw new Error(`Section '${key}' already exists in ${wikiId}`);
   }
-  return formatResponse({
-    created: false,
-    error: `Failed to create section '${key}' in ${wikiId}`,
-  });
+  throw new Error(`Failed to create section '${key}' in ${wikiId}`);
 }
 
 export async function updateSection(
@@ -260,13 +249,10 @@ export async function updateSection(
   relatedKeys,
 ) {
   const keyError = validateKey(key);
-  if (keyError) return formatResponse({ updated: false, error: keyError });
+  if (keyError) throw new Error(keyError);
 
   if (content !== undefined && content.length > MAX_CONTENT_SIZE) {
-    return formatResponse({
-      updated: false,
-      error: `Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})`,
-    });
+    throw new Error(`Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})`);
   }
 
   const result = await db.updateSection({
@@ -287,16 +273,9 @@ export async function updateSection(
       updated: true,
     });
   }
-  if (result && result.notFound) {
-    return formatResponse({ updated: false, error: `Section '${key}' not found in ${wikiId}` });
-  }
-  if (result && result.noChanges) {
-    return formatResponse({ updated: false, error: 'No fields provided to update' });
-  }
-  return formatResponse({
-    updated: false,
-    error: `Failed to update section '${key}' in ${wikiId}`,
-  });
+  if (result && result.notFound) throw new Error(`Section '${key}' not found in ${wikiId}`);
+  if (result && result.noChanges) throw new Error('No fields provided to update');
+  throw new Error(`Failed to update section '${key}' in ${wikiId}`);
 }
 
 export async function deleteSection(wikiId, key) {
@@ -309,7 +288,7 @@ export async function deleteSection(wikiId, key) {
       deleted: true,
     });
   }
-  return formatResponse({ deleted: false, error: `Section '${key}' not found in ${wikiId}` });
+  throw new Error(`Section '${key}' not found in ${wikiId}`);
 }
 
 // ─── IMPORT OPERATIONS ────────────────────────────────────────────────────────
