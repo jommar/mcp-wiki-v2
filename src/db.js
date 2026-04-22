@@ -239,7 +239,8 @@ export async function getSection(key, { wikiId = null, offset = 0, limit = 8000 
   const query = `
     SELECT key, wiki_id, parent, title, metadata,
            content,
-           LENGTH(content) as total_length
+           LENGTH(content) as total_length,
+           updated_at
     FROM wiki_sections s
     ${whereClause}
   `;
@@ -265,6 +266,7 @@ export async function getSection(key, { wikiId = null, offset = 0, limit = 8000 
     limit,
     hasMore,
     nextOffset: hasMore ? offset + limit : undefined,
+    updatedAt: row.updated_at?.toISOString() ?? null,
   };
 }
 
@@ -282,7 +284,7 @@ export async function getSections(keys, { wikiId = null, truncateLimit = 8000 } 
   }
 
   const query = `
-    SELECT key, wiki_id, parent, title, metadata, content, LENGTH(content) as total_length
+    SELECT key, wiki_id, parent, title, metadata, content, LENGTH(content) as total_length, updated_at
     FROM wiki_sections
     ${whereClause}
     ORDER BY array_position($1, key)
@@ -301,6 +303,7 @@ export async function getSections(keys, { wikiId = null, truncateLimit = 8000 } 
       content: truncated ? r.content.slice(0, truncateLimit) : r.content,
       truncated,
       totalLength: truncated ? r.total_length : undefined,
+      updatedAt: r.updated_at?.toISOString() ?? null,
     };
   });
 }

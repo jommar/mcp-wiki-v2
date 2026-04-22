@@ -126,6 +126,7 @@ export async function getWikiSection(key, wikiId, offset, limit, includeBacklink
     limit: section.limit,
     hasMore: section.hasMore,
     nextOffset: section.nextOffset,
+    updatedAt: section.updatedAt,
     relatedSections,
     ...(includeBacklinks && { backlinks }),
   });

@@ -232,6 +232,7 @@ server.registerTool(
       limit: z.number().optional().describe('Applied character limit'),
       hasMore: z.boolean().optional().describe('Whether more content exists beyond this page'),
       nextOffset: z.number().optional().describe('Offset for the next page, if hasMore is true'),
+      updatedAt: z.string().nullable().optional().describe('ISO 8601 timestamp of the last update, or null if unknown'),
       relatedSections: z
         .array(
           z.object({
@@ -299,6 +300,7 @@ server.registerTool(
                 .number()
                 .optional()
                 .describe('Total content length (present when truncated)'),
+              updatedAt: z.string().nullable().optional().describe('ISO 8601 timestamp of the last update, or null if unknown'),
             }),
             z.object({
               key: z.string().describe('Requested section slug key'),
