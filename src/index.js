@@ -24,6 +24,7 @@ const requestCounts = {
   get_wiki_section: 0,
   get_wiki_sections: 0,
   get_wiki_info: 0,
+  create_wiki: 0,
   create_section: 0,
   update_section: 0,
   delete_section: 0,
@@ -503,6 +504,46 @@ server.registerTool(
 );
 
 // ─── WRITE TOOLS ─────────────────────────────────────────────────────────────
+
+server.registerTool(
+  'create_wiki',
+  {
+    description:
+      'Create a new root-level wiki section with no parent. Use this to initialize a new wiki instance or create a top-level entry point for a wiki. For nested content under an existing topic, use create_section instead.',
+    inputSchema: {
+      wikiId: z.string().describe('Wiki instance ID (e.g., "user-wiki", "transact-wiki")'),
+      key: z.string().describe('Unique slug key (lowercase alphanumeric with hyphens)'),
+      title: z.string().describe('Display title for the wiki or root topic'),
+      content: z
+        .string()
+        .describe(
+          'Overview or description of this wiki — what it covers, its purpose, and key areas. Keep it concise (3–4 sentences max).',
+        ),
+      tags: z.array(z.string()).optional().describe('Tags for categorization'),
+      relatedKeys: z
+        .array(z.string())
+        .optional()
+        .describe('Section keys to link to from this root section'),
+    },
+    outputSchema: {
+      key: z.string().optional().describe('Created section key'),
+      wikiId: z.string().optional().describe('Wiki instance ID'),
+      title: z.string().optional().describe('Section title'),
+      created: z.boolean().describe('Whether the wiki section was created'),
+      error: z.string().optional().describe('Error message if creation failed'),
+    },
+  },
+  async ({ wikiId, key, title, content, tags, relatedKeys }) => {
+    try {
+      requestCounts.create_wiki++;
+      logger.info('create_wiki', { wikiId, key, title });
+      return await service.createSection(wikiId, key, title, content, null, tags, relatedKeys);
+    } catch (err) {
+      logger.error('create_wiki failed', { key, error: err.message });
+      return service.formatResponse({ created: false, error: err.message });
+    }
+  },
+);
 
 server.registerTool(
   'create_section',
