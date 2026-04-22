@@ -26,6 +26,7 @@ const requestCounts = {
   get_wiki_info: 0,
   create_wiki: 0,
   create_section: 0,
+  create_sections: 0,
   update_section: 0,
   delete_section: 0,
   get_backlinks: 0,
@@ -583,6 +584,51 @@ server.registerTool(
     } catch (err) {
       logger.error('create_section failed', { key, error: err.message });
       return service.formatResponse({ created: false, error: err.message });
+    }
+  },
+);
+
+server.registerTool(
+  'create_sections',
+  {
+    description:
+      'Create multiple wiki sections at once. All sections are created and embedded in parallel, then linked in a second parallel pass — so newly created sections can link to each other. Use instead of multiple create_section calls when adding several related sections.',
+    inputSchema: {
+      wikiId: z.string().describe('Wiki instance ID (e.g., "user-wiki", "transact-wiki")'),
+      sections: z
+        .array(
+          z.object({
+            key: z.string().describe('Unique slug key (lowercase alphanumeric with hyphens)'),
+            title: z.string().describe('Display title'),
+            content: z.string().describe('Markdown content. Keep bite-sized: 3–4 bullets or sentences max.'),
+            parent: z.string().describe('Parent topic name'),
+            tags: z.array(z.string()).optional().describe('Tags for categorization'),
+            relatedKeys: z.array(z.string()).optional().describe('Explicit links for this section'),
+          }),
+        )
+        .min(1)
+        .max(service.MAX_BATCH_SECTIONS)
+        .describe(`Array of sections to create (max ${service.MAX_BATCH_SECTIONS})`),
+    },
+    outputSchema: {
+      created: z
+        .array(z.object({ key: z.string(), wikiId: z.string(), title: z.string() }))
+        .describe('Successfully created sections'),
+      errors: z
+        .array(z.object({ key: z.string(), error: z.string() }))
+        .describe('Sections that failed to create'),
+      successCount: z.number().describe('Number of sections created'),
+      errorCount: z.number().describe('Number of sections that failed'),
+    },
+  },
+  async ({ wikiId, sections }) => {
+    try {
+      requestCounts.create_sections++;
+      logger.info('create_sections', { wikiId, count: sections.length });
+      return await service.createSections(wikiId, sections);
+    } catch (err) {
+      logger.error('create_sections failed', { wikiId, error: err.message });
+      return service.formatResponse({ created: [], errors: [], successCount: 0, errorCount: sections.length });
     }
   },
 );

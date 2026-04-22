@@ -9,6 +9,7 @@ import { getEmbedding } from './embedding.js';
 
 // Constants
 export const MAX_BATCH_KEYS = 20;
+export const MAX_BATCH_SECTIONS = 20;
 export const MAX_CONTENT_LENGTH = 8000;
 export const MAX_CONTENT_SIZE = 50000; // 50KB hard limit for writes
 export const KEY_PATTERN = /^[a-z0-9-]+$/;
@@ -240,6 +241,62 @@ export async function createSection(wikiId, key, title, content, parent, tags, r
     throw new Error(`Section '${key}' already exists in ${wikiId}`);
   }
   throw new Error(`Failed to create section '${key}' in ${wikiId}`);
+}
+
+export async function createSections(wikiId, sections) {
+  // Phase 1: validate keys and create all sections in parallel (INSERT + embed, skip linking)
+  const phase1 = await Promise.allSettled(
+    sections.map(async (s) => {
+      const keyError = validateKey(s.key);
+      if (keyError) throw new Error(keyError);
+      if (!s.content || !s.content.trim()) throw new Error('Content cannot be empty');
+      if (s.content.length > MAX_CONTENT_SIZE) {
+        throw new Error(`Content too large (${s.content.length} chars, max ${MAX_CONTENT_SIZE})`);
+      }
+
+      const result = await db.createSection({
+        wikiId,
+        key: s.key,
+        title: s.title,
+        content: s.content,
+        parent: s.parent || null,
+        tags: s.tags || [],
+        relatedKeys: s.relatedKeys || [],
+        skipLink: true,
+      });
+      if (result && result.exists) throw new Error(`Section '${s.key}' already exists in ${wikiId}`);
+      if (!result || !result.key) throw new Error(`Failed to create section '${s.key}'`);
+      return result;
+    }),
+  );
+
+  const created = [];
+  const errors = [];
+  for (let i = 0; i < sections.length; i++) {
+    const r = phase1[i];
+    const s = sections[i];
+    if (r.status === 'fulfilled') {
+      created.push({ key: s.key, title: s.title, relatedKeys: s.relatedKeys || [] });
+    } else {
+      errors.push({ key: s.key, error: r.reason.message });
+    }
+  }
+
+  // Phase 2: link all created sections in parallel — now they can all see each other
+  await Promise.allSettled(
+    created.map(({ key, relatedKeys }) =>
+      relatedKeys.length > 0
+        ? db.insertExplicitLinks(wikiId, key, relatedKeys)
+        : db.relinkSection(wikiId, key),
+    ),
+  );
+
+  return formatResponse({
+    created: created.map(({ key, title }) => ({ key, wikiId, title })),
+    errors,
+    successCount: created.length,
+    errorCount: errors.length,
+  });
 }
 
 export async function updateSection(

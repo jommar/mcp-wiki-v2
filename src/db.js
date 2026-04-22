@@ -423,6 +423,7 @@ export async function createSection({
   parent = null,
   tags = [],
   relatedKeys = [],
+  skipLink = false,
 }) {
   // Check for existing section first to give a clear error
   const { rows: existing } = await pool.query(
@@ -455,10 +456,12 @@ export async function createSection({
     }
 
     // Use explicit relatedKeys if provided, otherwise auto-link via embeddings
-    if (relatedKeys.length > 0) {
-      await insertExplicitLinks(wikiId, key, relatedKeys);
-    } else {
-      await relinkSection(wikiId, key);
+    if (!skipLink) {
+      if (relatedKeys.length > 0) {
+        await insertExplicitLinks(wikiId, key, relatedKeys);
+      } else {
+        await relinkSection(wikiId, key);
+      }
     }
   }
 
