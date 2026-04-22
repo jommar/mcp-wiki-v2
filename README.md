@@ -104,7 +104,7 @@ Or configure your MCP client:
 
 | Tool                | Description                                                                  |
 | ------------------- | ---------------------------------------------------------------------------- |
-| `search_wiki`       | Semantic search by meaning (falls back to keyword if embeddings unavailable) |
+| `search_wiki`       | Semantic search by meaning (falls back to keyword if embeddings unavailable); results include content snippets |
 | `get_wiki_section`  | Get a single section with content pagination; `includeBacklinks` optional    |
 | `get_wiki_sections` | Batch retrieve multiple sections (max 20 at once)                            |
 
@@ -114,7 +114,7 @@ Or configure your MCP client:
 | ---------------- | ----------------------------------------------------------------------------- |
 | `create_section` | Create a new wiki section (embedding auto-generated, `parent` required)       |
 | `update_section` | Update an existing section (embedding auto-regenerated, history auto-tracked) |
-| `delete_section` | Delete a section and its backlinks                                            |
+| `delete_section` | Delete a section and its backlinks (run `get_backlinks` first)                |
 
 ### Import/Export
 
@@ -128,8 +128,8 @@ Or configure your MCP client:
 | Tool                   | Description                                                    |
 | ---------------------- | -------------------------------------------------------------- |
 | `get_backlinks`        | Find sections that link to a given section                     |
-| `validate_wiki`        | Find empty, orphaned, and unlinked sections                    |
-| `get_section_history`  | View edit history for a section                                |
+| `validate_wiki`        | Find empty, orphaned, and unlinked sections; returns counts alongside arrays |
+| `get_section_history`  | View edit history for a section (`wikiId` optional)            |
 | `auto_link_sections`   | Auto-link sections via embedding similarity (background job)   |
 
 ### `auto_link_sections` Options

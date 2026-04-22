@@ -14,7 +14,7 @@ This is a PostgreSQL-backed wiki system exposed via MCP tools. You can read, wri
 
 ### Reading
 
-4. **`search_wiki`** — Semantic search by meaning (falls back to keyword if embeddings unavailable)
+4. **`search_wiki`** — Semantic search by meaning (falls back to keyword if embeddings unavailable); results include a `snippet` (first 200 chars of content) — use this to triage relevance before fetching full sections
 5. **`get_wiki_section`** — Read a specific section by key; supports `includeBacklinks` for optional backlink retrieval
 6. **`get_wiki_sections`** — Batch read multiple sections (max 20 at once)
 
@@ -22,7 +22,7 @@ This is a PostgreSQL-backed wiki system exposed via MCP tools. You can read, wri
 
 7. **`create_section`** — Create a new section (embedding auto-generated, `parent` is **required**)
 8. **`update_section`** — Update an existing section (embedding auto-regenerated, history auto-tracked)
-9. **`delete_section`** — Delete a section
+9. **`delete_section`** — Delete a section and all its backlinks; run `get_backlinks` first to see what would break
 
 ### Import/Export
 
@@ -32,8 +32,8 @@ This is a PostgreSQL-backed wiki system exposed via MCP tools. You can read, wri
 ### Management
 
 12. **`get_backlinks`** — Find what sections link to a given section
-13. **`validate_wiki`** — Check for empty, orphaned, or unlinked sections
-14. **`get_section_history`** — View edit history
+13. **`validate_wiki`** — Check for empty, orphaned, or unlinked sections; returns counts (`emptySectionsCount`, `orphanedSectionsCount`, `unlinkedSectionsCount`) alongside the full arrays
+14. **`get_section_history`** — View edit history (`wikiId` optional if key is globally unique)
 15. **`auto_link_sections`** — Auto-link sections via embedding similarity (runs in background, returns status message)
 
 ## Workflow
@@ -53,13 +53,13 @@ After completing a task (feature, bug fix, migration):
 ```
 1. search_wiki(query="relevant topic") → find existing section
 2. If exists: update_section(key="...", content="new content", reason="what changed")
-3. If not exists: create_section(wiki_id="...", key="new-key", title="Title", content="...", parent="...")
+3. If not exists: create_section(wikiId="...", key="new-key", title="Title", content="...", parent="...")
 ```
 
 ### Creating New Sections
 
 - **key**: lowercase alphanumeric with hyphens (e.g., `portage-backend-architecture`)
-- **wiki_id**: `user-wiki` or `transact-wiki`
+- **wikiId**: `user-wiki` or `transact-wiki`
 - **parent**: **required** — the parent topic/group name
 - **content**: markdown format
 - **relatedKeys**: optional array of section keys to link to (auto-discovers via embedding similarity)
@@ -125,6 +125,7 @@ Update wiki sections when:
 ## Tips
 
 - **Search first, browse second**: `search_wiki` is faster than scanning `list_wiki`
+- **Use snippets to triage**: `search_wiki` results include a 200-char `snippet` — read it before calling `get_wiki_section` to avoid fetching irrelevant sections
 - **Use `get_wiki_sections` for batch reads**: More efficient than multiple `get_wiki_section` calls
 - **Check `validate_wiki` periodically**: Find and clean up empty/orphaned sections
 - **Use `get_section_history` before updating**: See what changed previously
