@@ -454,8 +454,12 @@ export async function createSection({
       logger.warn('Failed to generate embedding on create', { key, error: err.message });
     }
 
-    // Auto-link based on embedding similarity
-    await relinkSection(wikiId, key);
+    // Use explicit relatedKeys if provided, otherwise auto-link via embeddings
+    if (relatedKeys.length > 0) {
+      await insertExplicitLinks(wikiId, key, relatedKeys);
+    } else {
+      await relinkSection(wikiId, key);
+    }
   }
 
   return rows[0] || null;
@@ -508,7 +512,7 @@ export async function updateSection({
 
   // If only relatedKeys changed, skip the UPDATE query entirely
   if (updates.length === 0) {
-    await relinkSection(wikiId, key);
+    await insertExplicitLinks(wikiId, key, relatedKeys);
     return existing[0];
   }
 
@@ -550,9 +554,13 @@ export async function updateSection({
     }
   }
 
-  // Auto-link based on embedding similarity
-  if (rows.length > 0 && relatedKeys !== undefined) {
-    await relinkSection(wikiId, key);
+  // Update links: use explicit relatedKeys if provided, relink if embedding changed
+  if (rows.length > 0) {
+    if (relatedKeys !== undefined) {
+      await insertExplicitLinks(wikiId, key, relatedKeys);
+    } else if (content !== undefined || title !== undefined) {
+      await relinkSection(wikiId, key);
+    }
   }
 
   return rows[0] || null;
@@ -801,8 +809,17 @@ export async function incrementAccessCount(wikiId, key) {
 /**
  * Re-link a section based on embedding similarity.
  * Deletes existing outgoing links and inserts new ones.
+ * If skipIfLinked is true, does nothing when the section already has outgoing links.
  */
-export async function relinkSection(wikiId, key) {
+export async function relinkSection(wikiId, key, { skipIfLinked = false } = {}) {
+  if (skipIfLinked) {
+    const { rowCount } = await pool.query(
+      'SELECT 1 FROM section_links WHERE from_wiki_id = $1 AND from_key = $2 LIMIT 1',
+      [wikiId, key],
+    );
+    if (rowCount > 0) return;
+  }
+
   // Delete existing outgoing links
   await pool.query(`DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`, [
     wikiId,
@@ -816,6 +833,33 @@ export async function relinkSection(wikiId, key) {
   // Insert new links
   for (const target of similar) {
     await insertSectionLink(wikiId, key, target.wikiId, target.key);
+  }
+}
+
+/**
+ * Insert explicit section links from relatedKeys.
+ * Validates targets exist to avoid FK violations, logs unknown keys as warnings.
+ * Clears existing outgoing links first (replaces, not appends).
+ */
+export async function insertExplicitLinks(wikiId, fromKey, relatedKeys) {
+  await clearOutgoingLinks(wikiId, fromKey);
+  if (relatedKeys.length === 0) return;
+
+  const { rows } = await pool.query(
+    'SELECT key FROM wiki_sections WHERE wiki_id = $1 AND key = ANY($2)',
+    [wikiId, relatedKeys],
+  );
+  const validKeys = new Set(rows.map((r) => r.key));
+
+  const invalid = relatedKeys.filter((k) => !validKeys.has(k));
+  if (invalid.length > 0) {
+    logger.warn('insertExplicitLinks: relatedKeys not found, skipping', { wikiId, fromKey, invalid });
+  }
+
+  for (const targetKey of relatedKeys) {
+    if (validKeys.has(targetKey)) {
+      await insertSectionLink(wikiId, fromKey, wikiId, targetKey);
+    }
   }
 }
 

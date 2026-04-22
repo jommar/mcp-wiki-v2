@@ -100,13 +100,15 @@ export async function getWikiSection(key, wikiId, offset, limit, includeBacklink
 
   const relatedSections = await db.getOutgoingLinks(wikiId || section.wikiId, key);
 
-  // Fire-and-forget: track access and re-link in background
+  // Fire-and-forget: track access; auto-link only if section has no links yet
   db.incrementAccessCount(wikiId || section.wikiId, section.key).catch((err) =>
     logger.warn('Failed to increment access count', { key: section.key, error: err.message }),
   );
-  db.relinkSection(wikiId || section.wikiId, section.key).catch((err) =>
-    logger.warn('Failed to relink section', { key: section.key, error: err.message }),
-  );
+  if (relatedSections.length === 0) {
+    db.relinkSection(wikiId || section.wikiId, section.key).catch((err) =>
+      logger.warn('Failed to relink section', { key: section.key, error: err.message }),
+    );
+  }
 
   let backlinks;
   if (includeBacklinks) {
@@ -152,13 +154,13 @@ export async function getWikiSections(keys, wikiId) {
 
   const errorCount = allSections.filter((s) => s.error).length;
 
-  // Fire-and-forget: track access and re-link for each successfully returned section
+  // Fire-and-forget: track access and auto-link if section has no links yet
   for (const s of allSections) {
     if (!s.error) {
       db.incrementAccessCount(wikiId || s.wikiId, s.key).catch((err) =>
         logger.warn('Failed to increment access count', { key: s.key, error: err.message }),
       );
-      db.relinkSection(wikiId || s.wikiId, s.key).catch((err) =>
+      db.relinkSection(wikiId || s.wikiId, s.key, { skipIfLinked: true }).catch((err) =>
         logger.warn('Failed to relink section', { key: s.key, error: err.message }),
       );
     }
