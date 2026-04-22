@@ -237,7 +237,7 @@ server.registerTool(
           }),
         )
         .optional()
-        .describe('Related sections by key prefix'),
+        .describe('Outgoing links from this section (embedding-based, set by auto-link)'),
       backlinks: z
         .array(
           z.object({
@@ -436,6 +436,9 @@ server.registerTool(
           }),
         )
         .describe('Sections not linked from any other section'),
+      emptySectionsCount: z.number().describe('Number of empty sections'),
+      orphanedSectionsCount: z.number().describe('Number of orphaned sections'),
+      unlinkedSectionsCount: z.number().describe('Number of unlinked sections'),
       error: z.string().optional().describe('Error message if request failed'),
     },
     annotations: readOnlyAnnotations,
@@ -480,6 +483,7 @@ server.registerTool(
       count: z.number().describe('Number of history entries'),
       error: z.string().optional().describe('Error message if request failed'),
     },
+    annotations: readOnlyAnnotations,
   },
   async ({ key, wikiId, limit }) => {
     try {
@@ -597,6 +601,7 @@ server.registerTool(
       deleted: z.boolean().describe('Whether the section was deleted'),
       error: z.string().optional().describe('Error message if deletion failed'),
     },
+    annotations: { destructiveHint: true },
   },
   async ({ wikiId, key }) => {
     try {
@@ -642,6 +647,7 @@ server.registerTool(
       parallel: z
         .boolean()
         .optional()
+        .default(true)
         .describe('Process sections in parallel (default: true)'),
     },
     outputSchema: z.object({

@@ -94,7 +94,8 @@ async function searchSemantic(query, { wikiId, limit }) {
     const searchQuery = `
       SELECT key, wiki_id, parent, title, metadata->'breadcrumbs' as breadcrumbs,
              1 - (embedding <=> $1) as similarity,
-             LENGTH(content) as content_length
+             LENGTH(content) as content_length,
+             LEFT(content, 200) as snippet
       FROM wiki_sections
       ${whereClause} ${whereClause ? 'AND' : 'WHERE'} embedding IS NOT NULL
       ORDER BY embedding <=> $1
@@ -111,6 +112,7 @@ async function searchSemantic(query, { wikiId, limit }) {
       breadcrumbs: r.breadcrumbs || [],
       rank: r.similarity,
       contentLength: r.content_length,
+      snippet: r.snippet,
     }));
   } catch (err) {
     logger.warn('Semantic search failed, falling back to keyword', { error: err.message });
@@ -156,7 +158,8 @@ export async function searchSections(query, { wikiId = null, fuzzy = false, limi
   const searchQuery = `
     SELECT key, wiki_id, parent, title, metadata->'breadcrumbs' as breadcrumbs,
            ts_rank(search_vector, to_tsquery('english', $${params.length + 1})) as rank,
-           LENGTH(content) as content_length
+           LENGTH(content) as content_length,
+           LEFT(content, 200) as snippet
     FROM wiki_sections
     ${whereClause} ${whereClause ? 'AND' : 'WHERE'} search_vector @@ to_tsquery('english', $${params.length + 1})
     ORDER BY rank DESC
@@ -173,6 +176,7 @@ export async function searchSections(query, { wikiId = null, fuzzy = false, limi
     breadcrumbs: r.breadcrumbs || [],
     rank: r.rank,
     contentLength: r.content_length,
+    snippet: r.snippet,
   }));
 }
 
@@ -194,7 +198,8 @@ async function searchFuzzy(query, { wikiId, limit }) {
              similarity(title, $${params.length + 1}),
              similarity(key, $${params.length + 1})
            ) as score,
-           LENGTH(content) as content_length
+           LENGTH(content) as content_length,
+           LEFT(content, 200) as snippet
     FROM wiki_sections
     ${whereClause} ${whereClause ? 'AND' : 'WHERE'} (
       title % $${params.length + 1}
@@ -215,6 +220,7 @@ async function searchFuzzy(query, { wikiId, limit }) {
     breadcrumbs: r.breadcrumbs || [],
     rank: r.score,
     contentLength: r.content_length,
+    snippet: r.snippet,
   }));
 }
 

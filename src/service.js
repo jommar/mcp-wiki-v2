@@ -76,6 +76,7 @@ export async function searchWiki(query, wikiId, fuzzy, limit) {
     parent: r.parent,
     title: r.title,
     breadcrumbs: r.breadcrumbs,
+    snippet: r.snippet || undefined,
   }));
 
   return formatResponse({ results: formattedResults, count: results.length });
@@ -97,13 +98,7 @@ export async function getWikiSection(key, wikiId, offset, limit, includeBacklink
     });
   }
 
-  // Find related sections by key prefix
-  const prefix = key.split('-').slice(0, 2).join('-');
-  const related = await db.browseSections(prefix, wikiId || null);
-  const relatedSections = related
-    .filter((r) => r.key !== key)
-    .slice(0, 5)
-    .map((r) => ({ key: r.key, title: r.title }));
+  const relatedSections = await db.getOutgoingLinks(wikiId || section.wikiId, key);
 
   // Fire-and-forget: track access and re-link in background
   db.incrementAccessCount(wikiId || section.wikiId, section.key).catch((err) =>
@@ -188,7 +183,12 @@ export async function getBacklinks(key, wikiId) {
 
 export async function validateWiki(wikiId) {
   const results = await db.validateWiki(wikiId || null);
-  return formatResponse(results);
+  return formatResponse({
+    ...results,
+    emptySectionsCount: results.emptySections.length,
+    orphanedSectionsCount: results.orphanedSections.length,
+    unlinkedSectionsCount: results.unlinkedSections.length,
+  });
 }
 
 export async function getSectionHistory(wikiId, key, limit) {
