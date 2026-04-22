@@ -62,7 +62,7 @@ export async function searchWiki(query, wikiId, fuzzy, limit) {
 
   if (results.length === 0) {
     const similar = await db.findSimilar(query, wikiId || null);
-    const suggestions = similar.map((s) => s.key);
+    const suggestions = similar.map((s) => ({ key: s.key, wikiId: s.wikiId }));
     return formatResponse({
       results: [],
       count: 0,
@@ -229,6 +229,7 @@ export async function createSection(wikiId, key, title, content, parent, tags, r
       key: result.key,
       wikiId: result.wiki_id,
       title: result.title,
+      parent: result.parent,
       created: true,
     });
   }

@@ -171,7 +171,10 @@ server.registerTool(
         )
         .describe('Matching sections, header matches first'),
       count: z.number().describe('Number of results'),
-      suggestions: z.array(z.string()).optional().describe('Similar keys when no results found'),
+      suggestions: z
+        .array(z.object({ key: z.string(), wikiId: z.string() }))
+        .optional()
+        .describe('Similar sections when no results found'),
       error: z.string().optional().describe('Error message if request failed'),
     },
     annotations: readOnlyAnnotations,
@@ -466,7 +469,7 @@ server.registerTool(
     description: 'Get the edit history of a wiki section.',
     inputSchema: {
       key: z.string().describe('The section key'),
-      wikiId: z.string().describe('Wiki instance ID'),
+      wikiId: z.string().optional().describe('Wiki instance ID'),
       limit: z.number().optional().default(10).describe('Number of history entries to return'),
     },
     outputSchema: {
@@ -489,7 +492,7 @@ server.registerTool(
     try {
       requestCounts.get_section_history++;
       logger.info('get_section_history', { key, wikiId, limit });
-      return await service.getSectionHistory(wikiId, key, limit);
+      return await service.getSectionHistory(wikiId || null, key, limit);
     } catch (err) {
       logger.error('get_section_history failed', { key, wikiId, error: err.message });
       return service.formatResponse({ history: [], count: 0, error: err.message });
@@ -524,6 +527,7 @@ server.registerTool(
       key: z.string().optional().describe('Created section key'),
       wikiId: z.string().optional().describe('Wiki instance ID'),
       title: z.string().optional().describe('Section title'),
+      parent: z.string().optional().describe('Parent topic name'),
       created: z.boolean().describe('Whether the section was created'),
       error: z.string().optional().describe('Error message if creation failed'),
     },
@@ -543,7 +547,8 @@ server.registerTool(
 server.registerTool(
   'update_section',
   {
-    description: 'Update an existing wiki section. Only provide fields you want to change.',
+    description:
+      'Update an existing wiki section. Only provide fields you want to change. At least one of content, title, parent, tags, or relatedKeys must be provided.',
     inputSchema: {
       wikiId: z.string().describe('Wiki instance ID'),
       key: z.string().describe('Section key to update'),
@@ -589,7 +594,8 @@ server.registerTool(
 server.registerTool(
   'delete_section',
   {
-    description: 'Delete a wiki section. This also removes all backlinks to/from this section.',
+    description:
+      'Delete a wiki section. This also removes all backlinks to/from this section. Run get_backlinks first to see what links here before deleting.',
     inputSchema: {
       wikiId: z.string().describe('Wiki instance ID'),
       key: z.string().describe('Section key to delete'),
@@ -621,7 +627,7 @@ server.registerTool(
   'auto_link_sections',
   {
     description:
-      'Automatically find related sections using vector embeddings and append **Related:** [[key]] blocks to sections that lack them. Uses cosine similarity on stored embeddings. This endpoint always runs in the background and returns only a status message. Results are never returned directly.',
+      'Automatically find related sections using vector embeddings and link sections that lack them. Uses cosine similarity on stored embeddings. Always runs in the background — returns a status message immediately. Only one run per wiki is allowed at a time; calling again while in progress returns an error.',
     inputSchema: {
       wikiId: z.string().optional().describe('Wiki instance ID to process'),
       minSimilarity: z

@@ -580,15 +580,21 @@ export async function deleteSection(wikiId, key) {
  * Get section history.
  */
 export async function getSectionHistory(wikiId, key, limit = 10) {
+  const params = [key];
+  let whereClause = 'WHERE section_key = $1';
+  if (wikiId) {
+    whereClause += ' AND wiki_id = $2';
+    params.push(wikiId);
+  }
+  params.push(limit);
+
   const { rows } = await pool.query(
-    `
-    SELECT content_before, content_after, changed_at, change_reason
-    FROM section_history
-    WHERE wiki_id = $1 AND section_key = $2
-    ORDER BY changed_at DESC
-    LIMIT $3
-  `,
-    [wikiId, key, limit],
+    `SELECT content_before, content_after, changed_at, change_reason
+     FROM section_history
+     ${whereClause}
+     ORDER BY changed_at DESC
+     LIMIT $${params.length}`,
+    params,
   );
 
   return rows;
