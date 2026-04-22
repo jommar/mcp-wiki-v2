@@ -110,11 +110,13 @@ Or configure your MCP client:
 
 ### Writing
 
-| Tool             | Description                                                                   |
-| ---------------- | ----------------------------------------------------------------------------- |
-| `create_section` | Create a new wiki section (embedding auto-generated, `parent` required)       |
-| `update_section` | Update an existing section (embedding auto-regenerated, history auto-tracked) |
-| `delete_section` | Delete a section and its backlinks (run `get_backlinks` first)                |
+| Tool              | Description                                                                   |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `create_wiki`     | Create a root-level section with no parent (entry point for a new wiki instance) |
+| `create_section`  | Create a new wiki section under a parent topic (embedding auto-generated)     |
+| `create_sections` | Batch-create multiple sections in parallel; all sections link to each other after creation (max 20) |
+| `update_section`  | Update an existing section (embedding auto-regenerated, history auto-tracked) |
+| `delete_section`  | Delete a section and its backlinks (run `get_backlinks` first)                |
 
 ### Import/Export
 
@@ -209,11 +211,13 @@ Uses `@xenova/transformers` with `all-MiniLM-L6-v2` (384-dim, quantized) — run
 - **Full-text search**: `tsvector` column with weighted ranking (title > content > tags)
 - **Fuzzy search**: pg_trigram similarity for typo tolerance
 - **Vector search**: 384-dim embeddings via pgvector (HNSW index)
+- **Smart linking**: `relatedKeys` on create/update inserts explicit links (validated against existing sections); embedding-based auto-link fires as fallback when no explicit keys are given
+- **Relink on content change**: updating `content` or `title` regenerates the embedding and auto-relinks immediately
 - **Auto-backlinks**: `section_links` table is the canonical source of truth, populated via `relatedKeys` param and `auto_link_sections`
 - **Auto-history**: Trigger logs content changes with timestamps
 - **Auto-search-vector**: Trigger populates FTS index on insert/update
 - **Access tracking**: `access_count` and `last_accessed` updated on every read
-- **Background auto-relink**: Sections are re-linked via embedding similarity on read and via daily cron
+- **Read-triggered linking**: sections with no outgoing links are auto-linked on first read (safety net for orphans); sections that already have links are skipped
 
 ## Migrations
 
