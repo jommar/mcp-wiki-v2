@@ -243,42 +243,48 @@ export async function createSection(wikiId, key, title, content, parent, tags, r
   throw new Error(`Failed to create section '${key}' in ${wikiId}`);
 }
 
+const CREATE_SECTIONS_BATCH_SIZE = 5;
+
 export async function createSections(wikiId, sections) {
-  // Phase 1: validate keys and create all sections in parallel (INSERT + embed, skip linking)
-  const phase1 = await Promise.allSettled(
-    sections.map(async (s) => {
-      const keyError = validateKey(s.key);
-      if (keyError) throw new Error(keyError);
-      if (!s.content || !s.content.trim()) throw new Error('Content cannot be empty');
-      if (s.content.length > MAX_CONTENT_SIZE) {
-        throw new Error(`Content too large (${s.content.length} chars, max ${MAX_CONTENT_SIZE})`);
-      }
-
-      const result = await db.createSection({
-        wikiId,
-        key: s.key,
-        title: s.title,
-        content: s.content,
-        parent: s.parent || null,
-        tags: s.tags || [],
-        relatedKeys: s.relatedKeys || [],
-        skipLink: true,
-      });
-      if (result && result.exists) throw new Error(`Section '${s.key}' already exists in ${wikiId}`);
-      if (!result || !result.key) throw new Error(`Failed to create section '${s.key}'`);
-      return result;
-    }),
-  );
-
   const created = [];
   const errors = [];
-  for (let i = 0; i < sections.length; i++) {
-    const r = phase1[i];
-    const s = sections[i];
-    if (r.status === 'fulfilled') {
-      created.push({ key: s.key, title: s.title, relatedKeys: s.relatedKeys || [] });
-    } else {
-      errors.push({ key: s.key, error: r.reason.message });
+
+  // Phase 1: create in batches of CREATE_SECTIONS_BATCH_SIZE to reduce streaming window
+  for (let i = 0; i < sections.length; i += CREATE_SECTIONS_BATCH_SIZE) {
+    const batch = sections.slice(i, i + CREATE_SECTIONS_BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (s) => {
+        const keyError = validateKey(s.key);
+        if (keyError) throw new Error(keyError);
+        if (!s.content || !s.content.trim()) throw new Error('Content cannot be empty');
+        if (s.content.length > MAX_CONTENT_SIZE) {
+          throw new Error(`Content too large (${s.content.length} chars, max ${MAX_CONTENT_SIZE})`);
+        }
+
+        const result = await db.createSection({
+          wikiId,
+          key: s.key,
+          title: s.title,
+          content: s.content,
+          parent: s.parent || null,
+          tags: s.tags || [],
+          relatedKeys: s.relatedKeys || [],
+          skipLink: true,
+        });
+        if (result && result.exists) throw new Error(`Section '${s.key}' already exists in ${wikiId}`);
+        if (!result || !result.key) throw new Error(`Failed to create section '${s.key}'`);
+        return result;
+      }),
+    );
+
+    for (let j = 0; j < batch.length; j++) {
+      const r = results[j];
+      const s = batch[j];
+      if (r.status === 'fulfilled') {
+        created.push({ key: s.key, title: s.title, relatedKeys: s.relatedKeys || [] });
+      } else {
+        errors.push({ key: s.key, error: r.reason?.message ?? String(r.reason) });
+      }
     }
   }
 
