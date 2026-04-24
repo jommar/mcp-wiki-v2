@@ -33,7 +33,7 @@ This is a PostgreSQL-backed wiki system exposed via MCP tools. You can read, wri
 
 12. **`get_backlinks`** — Find what sections link to a given section
 13. **`validate_wiki`** — Check for empty, orphaned, or unlinked sections; returns counts (`emptySectionsCount`, `orphanedSectionsCount`, `unlinkedSectionsCount`) alongside the full arrays
-14. **`get_section_history`** — View edit history (`wikiId` optional if key is globally unique)
+14. **`get_section_history`** — View edit history (`wikiId` absent when `WIKI_ID` env is set; required otherwise)
 15. **`auto_link_sections`** — Auto-link sections via embedding similarity (runs in background, returns status message)
 
 ## Workflow
@@ -53,13 +53,13 @@ After completing a task (feature, bug fix, migration):
 ```
 1. search_wiki(query="relevant topic") → find existing section
 2. If exists: update_section(key="...", content="new content", reason="what changed")
-3. If not exists: create_section(wikiId="...", key="new-key", title="Title", content="...", parent="...")
+3. If not exists: create_section(key="new-key", title="Title", content="...", parent="...")
 ```
 
 ### Creating New Sections
 
 - **key**: lowercase alphanumeric with hyphens (e.g., `portage-backend-architecture`)
-- **wikiId**: `user-wiki` or `transact-wiki`
+- **wikiId**: omit if `WIKI_ID` env is set (resolved automatically); required otherwise (e.g., `user-wiki`)
 - **parent**: **required** — the parent topic/group name
 - **content**: markdown format
 - **relatedKeys**: optional array of section keys to link to (auto-discovers via embedding similarity)

@@ -67,9 +67,9 @@ Good: `approval-routing`, `approval-notifications`, `approval-escalations`, `app
 
 ### 0.7 wikiId
 
-- Pass `wikiId` whenever known.
-- Required for `get_wiki_section` when key isn't globally unique.
-- Required for all writes (`create_section`, `update_section`, `delete_section`).
+- If the server has `WIKI_ID` set, `wikiId` is **absent from all tool schemas** — the server resolves it automatically. Do not pass it.
+- If `WIKI_ID` is not set, `wikiId` is **required** on all tools. Pass it on every call.
+- Never guess a wiki ID. If you don't know it, use `get_wiki_info` to discover available instances.
 
 ### 0.8 Deletion Is Last Resort
 

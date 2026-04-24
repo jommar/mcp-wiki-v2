@@ -32,6 +32,7 @@ services:
       DB_USER: ${DB_USER:-wiki}
       DB_PASSWORD: ${DB_PASSWORD:-wiki}
       DB_NAME: ${DB_NAME:-wiki}
+      WIKI_ID: ${WIKI_ID:-}
     depends_on:
       wiki-db:
         condition: service_healthy
@@ -51,6 +52,7 @@ services:
       DB_USER: ${DB_USER:-wiki}
       DB_PASSWORD: ${DB_PASSWORD:-wiki}
       DB_NAME: ${DB_NAME:-wiki}
+      WIKI_ID: ${WIKI_ID:-}
     depends_on:
       wiki-db:
         condition: service_healthy

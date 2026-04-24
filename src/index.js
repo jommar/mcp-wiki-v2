@@ -10,6 +10,24 @@ import * as service from './service.js';
 
 config();
 
+// ─── WIKI ID RESOLUTION ──────────────────────────────────────────────────────
+// If WIKI_ID env is set, wikiId is omitted from all tool schemas and resolved
+// from the env value. If not set, wikiId is required so the agent must supply it.
+
+const DEFAULT_WIKI_ID = process.env.WIKI_ID || null;
+
+function wikiIdField() {
+  if (DEFAULT_WIKI_ID) return {};
+  return {
+    wikiId: z.string().describe('Wiki instance ID (e.g., "user-wiki", "transact-wiki")'),
+  };
+}
+
+function resolveWikiId(wikiId) {
+  if (DEFAULT_WIKI_ID) return DEFAULT_WIKI_ID;
+  return wikiId || null;
+}
+
 const startedAt = Date.now();
 
 const server = new McpServer({
@@ -57,10 +75,7 @@ server.registerTool(
     description:
       'List all available wiki section keys. Use browse_wiki instead for topic-filtered results.',
     inputSchema: {
-      wikiId: z
-        .string()
-        .optional()
-        .describe('Filter by wiki instance (e.g., "user-wiki", "transact-wiki")'),
+      ...wikiIdField(),
       limit: z
         .number()
         .optional()
@@ -86,7 +101,7 @@ server.registerTool(
     try {
       requestCounts.list_wiki++;
       logger.info('list_wiki', { wikiId, limit });
-      return await service.listWiki(wikiId, limit);
+      return await service.listWiki(resolveWikiId(wikiId), limit);
     } catch (err) {
       logger.error('list_wiki failed', { error: err.message });
       return service.formatResponse({ sections: [], count: 0, error: err.message });
@@ -106,7 +121,7 @@ server.registerTool(
         .describe(
           'Filter by parent topic (e.g., "Portage Backend", "Approval Workflow Deep Dive")',
         ),
-      wikiId: z.string().optional().describe('Filter by wiki instance'),
+      ...wikiIdField(),
       limit: z
         .number()
         .optional()
@@ -139,7 +154,7 @@ server.registerTool(
     try {
       requestCounts.browse_wiki++;
       logger.info('browse_wiki', { topic, wikiId, limit });
-      return await service.browseWiki(topic, wikiId, limit);
+      return await service.browseWiki(topic, resolveWikiId(wikiId), limit);
     } catch (err) {
       logger.error('browse_wiki failed', { topic, wikiId, error: err.message });
       return service.formatResponse({ groups: [], count: 0, error: err.message });
@@ -158,7 +173,7 @@ server.registerTool(
         .min(1)
         .max(200)
         .describe('Search query — can be natural language or keywords'),
-      wikiId: z.string().optional().describe('Filter by wiki instance'),
+      ...wikiIdField(),
       fuzzy: z.boolean().optional().default(false).describe('Enable fuzzy matching for typos'),
       limit: z.number().optional().default(20).describe('Maximum number of results to return'),
     },
@@ -185,7 +200,7 @@ server.registerTool(
     try {
       requestCounts.search_wiki++;
       logger.info('search_wiki', { query, wikiId, fuzzy, limit });
-      return await service.searchWiki(query, wikiId, fuzzy, limit);
+      return await service.searchWiki(query, resolveWikiId(wikiId), fuzzy, limit);
     } catch (err) {
       logger.error('search_wiki failed', { query, error: err.message });
       return service.formatResponse({ results: [], count: 0, error: err.message });
@@ -201,10 +216,7 @@ server.registerTool(
       key: z
         .string()
         .describe("The unique slug key of the section (e.g., 'portage-backend-architecture')"),
-      wikiId: z
-        .string()
-        .optional()
-        .describe('Filter by wiki instance (required if key is not globally unique)'),
+      ...wikiIdField(),
       offset: z
         .number()
         .optional()
@@ -264,7 +276,7 @@ server.registerTool(
     try {
       requestCounts.get_wiki_section++;
       logger.info('get_wiki_section', { key, wikiId, offset, limit, includeBacklinks });
-      return await service.getWikiSection(key, wikiId, offset, limit, includeBacklinks);
+      return await service.getWikiSection(key, resolveWikiId(wikiId), offset, limit, includeBacklinks);
     } catch (err) {
       logger.error('get_wiki_section failed', { key, error: err.message });
       return service.formatResponse({ error: err.message });
@@ -283,7 +295,7 @@ server.registerTool(
         .min(1)
         .max(service.MAX_BATCH_KEYS)
         .describe(`Array of section slug keys to retrieve (max ${service.MAX_BATCH_KEYS})`),
-      wikiId: z.string().optional().describe('Filter by wiki instance'),
+      ...wikiIdField(),
     },
     outputSchema: {
       sections: z
@@ -321,7 +333,7 @@ server.registerTool(
     try {
       requestCounts.get_wiki_sections++;
       logger.info('get_wiki_sections', { keys, wikiId });
-      return await service.getWikiSections(keys, wikiId);
+      return await service.getWikiSections(keys, resolveWikiId(wikiId));
     } catch (err) {
       logger.error('get_wiki_sections failed', { keys, error: err.message });
       return service.formatResponse({
@@ -340,7 +352,7 @@ server.registerTool(
     description:
       'Get metadata about the connected wiki instance — wiki IDs, section counts, and server uptime.',
     inputSchema: {
-      wikiId: z.string().optional().describe('Filter by wiki instance'),
+      ...wikiIdField(),
     },
     outputSchema: {
       wikis: z
@@ -359,7 +371,7 @@ server.registerTool(
   async ({ wikiId }) => {
     try {
       requestCounts.get_wiki_info++;
-      const result = await service.getWikiInfo(wikiId);
+      const result = await service.getWikiInfo(resolveWikiId(wikiId));
       // Add uptime to the response
       result.structuredContent.uptime = (Date.now() - startedAt) / 1000;
       result.content[0].text = JSON.stringify(result.structuredContent, null, 2);
@@ -380,7 +392,7 @@ server.registerTool(
     description: 'Find all wiki sections that link to a given section (backlinks).',
     inputSchema: {
       key: z.string().describe('The section key to find backlinks for'),
-      wikiId: z.string().optional().describe('Filter by wiki instance'),
+      ...wikiIdField(),
     },
     outputSchema: {
       backlinks: z
@@ -402,7 +414,7 @@ server.registerTool(
     try {
       requestCounts.get_backlinks++;
       logger.info('get_backlinks', { key, wikiId });
-      return await service.getBacklinks(key, wikiId);
+      return await service.getBacklinks(key, resolveWikiId(wikiId));
     } catch (err) {
       logger.error('get_backlinks failed', { key, error: err.message });
       return service.formatResponse({ backlinks: [], count: 0, error: err.message });
@@ -416,7 +428,7 @@ server.registerTool(
     description:
       'Run validation checks on wiki sections — finds empty sections, orphaned sections, and unlinked sections.',
     inputSchema: {
-      wikiId: z.string().optional().describe('Filter by wiki instance'),
+      ...wikiIdField(),
     },
     outputSchema: {
       emptySections: z
@@ -454,7 +466,7 @@ server.registerTool(
     try {
       requestCounts.validate_wiki++;
       logger.info('validate_wiki', { wikiId });
-      return await service.validateWiki(wikiId);
+      return await service.validateWiki(resolveWikiId(wikiId));
     } catch (err) {
       logger.error('validate_wiki failed', { error: err.message });
       return service.formatResponse({
@@ -473,7 +485,7 @@ server.registerTool(
     description: 'Get the edit history of a wiki section.',
     inputSchema: {
       key: z.string().describe('The section key'),
-      wikiId: z.string().optional().describe('Wiki instance ID'),
+      ...wikiIdField(),
       limit: z.number().optional().default(10).describe('Number of history entries to return'),
     },
     outputSchema: {
@@ -496,7 +508,7 @@ server.registerTool(
     try {
       requestCounts.get_section_history++;
       logger.info('get_section_history', { key, wikiId, limit });
-      return await service.getSectionHistory(wikiId || null, key, limit);
+      return await service.getSectionHistory(resolveWikiId(wikiId), key, limit);
     } catch (err) {
       logger.error('get_section_history failed', { key, wikiId, error: err.message });
       return service.formatResponse({ history: [], count: 0, error: err.message });
@@ -512,7 +524,7 @@ server.registerTool(
     description:
       'Create a new root-level wiki section with no parent. Use this to initialize a new wiki instance or create a top-level entry point for a wiki. For nested content under an existing topic, use create_section instead.',
     inputSchema: {
-      wikiId: z.string().describe('Wiki instance ID (e.g., "user-wiki", "transact-wiki")'),
+      ...wikiIdField(),
       key: z.string().describe('Unique slug key (lowercase alphanumeric with hyphens)'),
       title: z.string().describe('Display title for the wiki or root topic'),
       content: z
@@ -538,7 +550,7 @@ server.registerTool(
     try {
       requestCounts.create_wiki++;
       logger.info('create_wiki', { wikiId, key, title });
-      return await service.createSection(wikiId, key, title, content, null, tags, relatedKeys);
+      return await service.createSection(resolveWikiId(wikiId), key, title, content, null, tags, relatedKeys);
     } catch (err) {
       logger.error('create_wiki failed', { key, error: err.message });
       return service.formatResponse({ created: false, error: err.message });
@@ -552,7 +564,7 @@ server.registerTool(
     description:
       'Create a new bite-sized wiki section. CRITICAL: Before creating, ALWAYS search for existing sections using search_wiki to avoid duplicates. Check if a similar section already exists — if so, use update_section instead. Only create new sections for genuinely new topics.',
     inputSchema: {
-      wikiId: z.string().describe('Wiki instance ID (e.g., "user-wiki", "transact-wiki")'),
+      ...wikiIdField(),
       key: z.string().describe('Unique slug key (lowercase alphanumeric with hyphens)'),
       title: z.string().describe('Display title'),
       content: z
@@ -580,7 +592,7 @@ server.registerTool(
     try {
       requestCounts.create_section++;
       logger.info('create_section', { wikiId, key, title });
-      return await service.createSection(wikiId, key, title, content, parent, tags, relatedKeys);
+      return await service.createSection(resolveWikiId(wikiId), key, title, content, parent, tags, relatedKeys);
     } catch (err) {
       logger.error('create_section failed', { key, error: err.message });
       return service.formatResponse({ created: false, error: err.message });
@@ -594,7 +606,7 @@ server.registerTool(
     description:
       'Create multiple wiki sections at once. All sections are created and embedded in parallel, then linked in a second parallel pass — so newly created sections can link to each other. Use instead of multiple create_section calls when adding several related sections.',
     inputSchema: {
-      wikiId: z.string().describe('Wiki instance ID (e.g., "user-wiki", "transact-wiki")'),
+      ...wikiIdField(),
       sections: z
         .array(
           z.object({
@@ -625,7 +637,7 @@ server.registerTool(
     try {
       requestCounts.create_sections++;
       logger.info('create_sections', { wikiId, count: sections.length });
-      return await service.createSections(wikiId, sections);
+      return await service.createSections(resolveWikiId(wikiId), sections);
     } catch (err) {
       logger.error('create_sections failed', { wikiId, error: err.message });
       return service.formatResponse({ created: [], errors: [], successCount: 0, errorCount: sections.length });
@@ -639,7 +651,7 @@ server.registerTool(
     description:
       'Update an existing wiki section. Only provide fields you want to change. At least one of content, title, parent, tags, or relatedKeys must be provided.',
     inputSchema: {
-      wikiId: z.string().describe('Wiki instance ID'),
+      ...wikiIdField(),
       key: z.string().describe('Section key to update'),
       content: z.string().optional().describe('New markdown content'),
       title: z.string().optional().describe('New display title'),
@@ -661,10 +673,11 @@ server.registerTool(
   },
   async ({ wikiId, key, content, title, parent, tags, reason, relatedKeys }) => {
     try {
+      const resolvedWikiId = resolveWikiId(wikiId);
       requestCounts.update_section++;
-      logger.info('update_section', { wikiId, key, reason });
+      logger.info('update_section', { wikiId: resolvedWikiId, key, reason });
       return await service.updateSection(
-        wikiId,
+        resolvedWikiId,
         key,
         content,
         title,
@@ -686,7 +699,7 @@ server.registerTool(
     description:
       'Delete a wiki section. This also removes all backlinks to/from this section. Run get_backlinks first to see what links here before deleting.',
     inputSchema: {
-      wikiId: z.string().describe('Wiki instance ID'),
+      ...wikiIdField(),
       key: z.string().describe('Section key to delete'),
     },
     outputSchema: {
@@ -702,7 +715,7 @@ server.registerTool(
     try {
       requestCounts.delete_section++;
       logger.info('delete_section', { wikiId, key });
-      return await service.deleteSection(wikiId, key);
+      return await service.deleteSection(resolveWikiId(wikiId), key);
     } catch (err) {
       logger.error('delete_section failed', { key, error: err.message });
       return service.formatResponse({ deleted: false, error: err.message });
@@ -718,7 +731,7 @@ server.registerTool(
     description:
       'Automatically find related sections using vector embeddings and link sections that lack them. Uses cosine similarity on stored embeddings. Always runs in the background — returns a status message immediately. Only one run per wiki is allowed at a time; calling again while in progress returns an error.',
     inputSchema: {
-      wikiId: z.string().optional().describe('Wiki instance ID to process'),
+      ...wikiIdField(),
       minSimilarity: z
         .number()
         .optional()
@@ -752,11 +765,12 @@ server.registerTool(
   },
   ({ wikiId, minSimilarity, maxLinks, override, reembed, parallel }) => {
     try {
+      const resolvedWikiId = resolveWikiId(wikiId);
       requestCounts.auto_link_sections = (requestCounts.auto_link_sections || 0) + 1;
-      logger.info('auto_link_sections', { wikiId, minSimilarity, maxLinks, override, reembed, parallel });
+      logger.info('auto_link_sections', { wikiId: resolvedWikiId, minSimilarity, maxLinks, override, reembed, parallel });
 
       // If already running for this wiki, reject
-      const taskKey = wikiId || 'default';
+      const taskKey = resolvedWikiId || 'default';
       if (backgroundTasks.has(taskKey)) {
         return service.formatResponse({
           message: '',
@@ -765,14 +779,14 @@ server.registerTool(
       }
 
       // Run in background and track for shutdown
-      const task = service.autoLinkSections(wikiId, { minSimilarity, maxLinks, override, reembed, parallel });
+      const task = service.autoLinkSections(resolvedWikiId, { minSimilarity, maxLinks, override, reembed, parallel });
       backgroundTasks.set(taskKey, task);
       task
         .then(() => {
-          logger.info('auto_link_sections completed', { wikiId });
+          logger.info('auto_link_sections completed', { wikiId: resolvedWikiId });
         })
         .catch((err) => {
-          logger.error('auto_link_sections failed (background)', { wikiId, error: err.message });
+          logger.error('auto_link_sections failed (background)', { wikiId: resolvedWikiId, error: err.message });
         })
         .finally(() => {
           backgroundTasks.delete(taskKey);
@@ -836,10 +850,7 @@ server.registerTool(
       'Export wiki sections to markdown files. Exports all wikis by default, or a specific wiki if wikiId is provided.',
     inputSchema: {
       outputDir: z.string().describe('Directory to write exported markdown files to'),
-      wikiId: z
-        .string()
-        .optional()
-        .describe('Export only this wiki (exports all wikis if not provided)'),
+      ...wikiIdField(),
     },
     outputSchema: {
       results: z
@@ -861,7 +872,7 @@ server.registerTool(
     try {
       requestCounts.export_wiki = (requestCounts.export_wiki || 0) + 1;
       logger.info('export_wiki', { outputDir, wikiId });
-      return await service.exportWiki(outputDir, wikiId);
+      return await service.exportWiki(outputDir, resolveWikiId(wikiId));
     } catch (err) {
       logger.error('export_wiki failed', { outputDir, error: err.message });
       return service.formatResponse({ results: [], error: err.message });

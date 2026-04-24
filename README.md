@@ -238,6 +238,7 @@ The migration runner creates a `migrations` table to track applied files. On fir
 | `DB_USER`      | `wiki`                  | Database user                             |
 | `DB_PASSWORD`  | `wiki`                  | Database password                         |
 | `DB_NAME`      | `wiki`                  | Database name                             |
+| `WIKI_ID`      | *(unset)*               | Default wiki ID. When set, `wikiId` is omitted from all tool schemas and resolved automatically — agents don't need to pass it. |
 | `LOG_LEVEL`    | `info`                  | Log level (debug, info, warn, error)      |
 | `LOG_DIR`      | `logs`                  | Log directory                             |
 
