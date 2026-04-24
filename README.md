@@ -7,7 +7,7 @@ MCP server for wiki management backed by PostgreSQL. Supports semantic search, v
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │  MCP Client │────▶│  wiki-v2 Server  │────▶│  PostgreSQL 16  │
-│  (OpenCode) │◀────│  (Node.js)       │◀────│  + pgvector     │
+│ (Claude Code)│◀────│  (Node.js)       │◀────│  + pgvector     │
 └─────────────┘     └──────────────────┘     └─────────────────┘
                            │
                     ┌──────┴──────┐
@@ -26,73 +26,59 @@ MCP server for wiki management backed by PostgreSQL. Supports semantic search, v
 
 ## Quick Start
 
-### 1. Install dependencies
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) (includes Docker Compose)
+- **Windows users:** run everything from WSL2 — Docker Desktop on Windows requires it anyway
+
+### 1. Run the start script
 
 ```bash
-npm install
-npm run init  # Set up pre-commit hook for lint + format
+./start.sh
 ```
 
-### 2. Start the database
+This handles everything on first run and on restarts:
 
-```bash
-docker-compose up -d
-```
+- Detects your Docker Compose version (`docker compose` vs `docker-compose`)
+- Brings containers down then back up
+- Installs `node_modules` inside the container if missing (no local Node.js required)
+- Prints container health, wiki instance counts, and your MCP config path
 
-This starts 3 containers:
+The three containers started:
 - **wiki-db** — PostgreSQL 16 with pgvector (port 5433)
-- **wiki-server** — Node.js server (volume-mounted for live editing)
+- **wiki-server** — Node.js MCP server (volume-mounted for live editing)
 - **wiki-cron** — Daily auto-relink job at 3am
 
-On first start, migrations in `sql/` are auto-applied by the migration runner.
+Migrations in `sql/` are auto-applied on first start. After the initial setup, containers restart automatically on machine reboot — you only need `start.sh` again after a manual `docker compose down` or to pull updates.
 
-### 3. Import existing markdown files
+### 2. Add the MCP config to Claude Code
 
-Place markdown files with YAML frontmatter into `import/staging/`, then:
-
-```bash
-# Via MCP tool (recommended)
-# Use import_wiki tool from your MCP client
-
-# Or via CLI script
-node scripts/import-wiki-to-db.js
-```
-
-### 4. Start the MCP server
-
-```bash
-npm start
-```
-
-Or use MCP inspector for debugging:
-
-```bash
-npm run dev
-```
-
-Or configure your MCP client:
+Open `~/.claude.json` (printed by `start.sh`) and add under `mcpServers`:
 
 ```json
 {
-  "wiki-v2": {
-    "type": "local",
-    "command": ["node", "/home/dev/mcp/wiki-v2/src/index.js"],
-    "environment": {
-      "DB_HOST": "127.0.0.1",
-      "DB_PORT": "5433",
-      "DB_USER": "wiki",
-      "DB_PASSWORD": "wiki",
-      "DB_NAME": "wiki",
-      "LOG_LEVEL": "info",
-      "LOG_DIR": "/home/dev/mcp/wiki-v2/logs"
+  "mcpServers": {
+    "wiki": {
+      "command": "docker",
+      "args": ["exec", "-i", "wiki-v2-server", "node", "src/index.js"]
     }
   }
 }
 ```
 
-## Agent Setup (Claude Code / Claude Desktop)
+Restart Claude Code after saving. The wiki tools will appear automatically.
 
-Add to your `claude.json` under `mcpServers`. The server runs inside the Docker container — connect via `docker exec` (or SSH if the host is remote).
+### 3. Import existing markdown files (optional)
+
+Place markdown files with YAML frontmatter into `import/staging/`, then use the `import_wiki` tool from Claude Code, or run:
+
+```bash
+docker exec wiki-v2-server node scripts/import-wiki-to-db.js
+```
+
+## Agent Setup (Claude Code)
+
+Add to `~/.claude.json` under `mcpServers`. The server runs inside the Docker container — connect via `docker exec` (or SSH if the host is remote).
 
 ### Local (docker exec)
 
@@ -216,7 +202,8 @@ This tool runs in the background and returns an immediate status message. A cron
 
 | Script                          | Purpose                                        |
 | ------------------------------- | ---------------------------------------------- |
-| `npm start`                     | Start the MCP server                           |
+| `./start.sh`                    | Start all containers, install deps if needed, print status and MCP config |
+| `npm start`                     | Start the MCP server (outside Docker)          |
 | `npm run dev`                   | Start with MCP inspector for debugging         |
 | `npm run import`                | Import markdown from `import/staging/`         |
 | `npm run export`                | Export all wikis to `export/` directory        |
