@@ -90,6 +90,72 @@ Or configure your MCP client:
 }
 ```
 
+## Agent Setup (Claude Code / Claude Desktop)
+
+Add to your `claude.json` under `mcpServers`. The server runs inside the Docker container — connect via `docker exec` (or SSH if the host is remote).
+
+### Local (docker exec)
+
+```json
+{
+  "mcpServers": {
+    "wiki": {
+      "command": "docker",
+      "args": ["exec", "-i", "wiki-v2-server", "node", "src/index.js"]
+    }
+  }
+}
+```
+
+### Remote (SSH + docker exec)
+
+```json
+{
+  "mcpServers": {
+    "wiki": {
+      "command": "ssh",
+      "args": [
+        "-T", "-o", "StrictHostKeyChecking=no",
+        "user@host",
+        "docker exec -i wiki-v2-server node src/index.js"
+      ]
+    }
+  }
+}
+```
+
+### Dual-server pattern (pinning a wiki instance)
+
+Register the same server twice under different names — one without `WIKI_ID` (agent must pass it) and one with `WIKI_ID` forced via env (agent never passes it). This lets you dedicate a named tool set to a specific wiki instance:
+
+```json
+{
+  "mcpServers": {
+    "wiki": {
+      "command": "ssh",
+      "args": [
+        "-T", "-o", "StrictHostKeyChecking=no",
+        "user@host",
+        "docker exec -i wiki-v2-server node src/index.js"
+      ]
+    },
+    "memory": {
+      "command": "ssh",
+      "args": [
+        "-T", "-o", "StrictHostKeyChecking=no",
+        "user@host",
+        "docker exec -i -e WIKI_ID=memory wiki-v2-server node src/index.js"
+      ]
+    }
+  }
+}
+```
+
+- `wiki` — general-purpose; agent selects the wiki instance per call
+- `memory` — always targets the `memory` wiki; `wikiId` is absent from all tool schemas so the agent never needs to pass it
+
+This pattern scales to any number of pinned instances (`notes`, `docs`, etc.) by adding more entries pointing to the same container with different `WIKI_ID` values.
+
 ## MCP Tools
 
 ### Discovery
