@@ -36,25 +36,25 @@ const server = new McpServer({
 });
 
 const requestCounts = {
-  list_wiki: 0,
-  browse_wiki: 0,
-  search_wiki: 0,
-  get_wiki_section: 0,
-  get_wiki_sections: 0,
-  get_wiki_info: 0,
-  create_wiki: 0,
+  list: 0,
+  browse: 0,
+  search: 0,
+  get_section: 0,
+  get_sections: 0,
+  get_info: 0,
+  create: 0,
   create_section: 0,
   create_sections: 0,
   update_section: 0,
   update_sections: 0,
   delete_section: 0,
   get_backlinks: 0,
-  validate_wiki: 0,
+  validate: 0,
   get_section_history: 0,
   auto_link_sections: 0,
   get_job_status: 0,
-  import_wiki: 0,
-  export_wiki: 0,
+  import: 0,
+  export: 0,
 };
 
 // Track background tasks for graceful shutdown and status polling
@@ -74,10 +74,10 @@ const sectionRefSchema = {
 // ─── READ TOOLS ──────────────────────────────────────────────────────────────
 
 server.registerTool(
-  'list_wiki',
+  'list',
   {
     description:
-      'List all available wiki section keys. Use browse_wiki instead for topic-filtered results.',
+      'List all available section keys. Use browse instead for topic-filtered results.',
     inputSchema: {
       ...wikiIdField(),
       limit: z
@@ -105,21 +105,21 @@ server.registerTool(
   },
   async ({ wikiId, limit }) => {
     try {
-      requestCounts.list_wiki++;
-      logger.info('list_wiki', { wikiId, limit });
+      requestCounts.list++;
+      logger.info('list', { wikiId, limit });
       return await service.listWiki(resolveWikiId(wikiId), limit);
     } catch (err) {
-      logger.error('list_wiki failed', { error: err.message });
+      logger.error('list failed', { error: err.message });
       return service.formatResponse({ sections: [], count: 0, error: err.message });
     }
   },
 );
 
 server.registerTool(
-  'browse_wiki',
+  'browse',
   {
     description:
-      'Browse wiki sections by topic/parent. Returns section keys and titles without full content.',
+      'Browse sections by topic/parent. Returns section keys and titles without full content.',
     inputSchema: {
       topic: z
         .string()
@@ -158,21 +158,21 @@ server.registerTool(
   },
   async ({ topic, wikiId, limit }) => {
     try {
-      requestCounts.browse_wiki++;
-      logger.info('browse_wiki', { topic, wikiId, limit });
+      requestCounts.browse++;
+      logger.info('browse', { topic, wikiId, limit });
       return await service.browseWiki(topic, resolveWikiId(wikiId), limit);
     } catch (err) {
-      logger.error('browse_wiki failed', { topic, wikiId, error: err.message });
+      logger.error('browse failed', { topic, wikiId, error: err.message });
       return service.formatResponse({ groups: [], count: 0, error: err.message });
     }
   },
 );
 
 server.registerTool(
-  'search_wiki',
+  'search',
   {
     description:
-      'Search wiki sections by meaning (semantic search). Falls back to keyword matching if embeddings are unavailable. Returns matching section keys ranked by relevance.',
+      'Search sections by meaning (semantic search). Falls back to keyword matching if embeddings are unavailable. Returns matching section keys ranked by relevance.',
     inputSchema: {
       query: z
         .string()
@@ -208,20 +208,20 @@ server.registerTool(
   },
   async ({ query, wikiId, parent, fuzzy, limit }) => {
     try {
-      requestCounts.search_wiki++;
-      logger.info('search_wiki', { query, wikiId, parent, fuzzy, limit });
+      requestCounts.search++;
+      logger.info('search', { query, wikiId, parent, fuzzy, limit });
       return await service.searchWiki(query, resolveWikiId(wikiId), parent, fuzzy, limit);
     } catch (err) {
-      logger.error('search_wiki failed', { query, error: err.message });
+      logger.error('search failed', { query, error: err.message });
       return service.formatResponse({ results: [], count: 0, error: err.message });
     }
   },
 );
 
 server.registerTool(
-  'get_wiki_section',
+  'get_section',
   {
-    description: `Retrieve markdown content of a wiki section. Defaults to ${service.MAX_CONTENT_LENGTH} chars to save tokens. Set limit higher or use offset to read the full section.`,
+    description: `Retrieve markdown content of a section. Defaults to ${service.MAX_CONTENT_LENGTH} chars to save tokens. Set limit higher or use offset to read the full section.`,
     inputSchema: {
       key: z
         .string()
@@ -288,21 +288,21 @@ server.registerTool(
   },
   async ({ key, wikiId, offset, limit, includeBacklinks }) => {
     try {
-      requestCounts.get_wiki_section++;
-      logger.info('get_wiki_section', { key, wikiId, offset, limit, includeBacklinks });
+      requestCounts.get_section++;
+      logger.info('get_section', { key, wikiId, offset, limit, includeBacklinks });
       return await service.getWikiSection(key, resolveWikiId(wikiId), offset, limit, includeBacklinks);
     } catch (err) {
-      logger.error('get_wiki_section failed', { key, error: err.message });
+      logger.error('get_section failed', { key, error: err.message });
       return service.formatResponse({ error: err.message });
     }
   },
 );
 
 server.registerTool(
-  'get_wiki_sections',
+  'get_sections',
   {
     description:
-      'Retrieve multiple wiki sections at once. Each section is truncated to save tokens.',
+      'Retrieve multiple sections at once. Each section is truncated to save tokens.',
     inputSchema: {
       keys: z
         .array(z.string())
@@ -345,11 +345,11 @@ server.registerTool(
   },
   async ({ keys, wikiId }) => {
     try {
-      requestCounts.get_wiki_sections++;
-      logger.info('get_wiki_sections', { keys, wikiId });
+      requestCounts.get_sections++;
+      logger.info('get_sections', { keys, wikiId });
       return await service.getWikiSections(keys, resolveWikiId(wikiId));
     } catch (err) {
-      logger.error('get_wiki_sections failed', { keys, error: err.message });
+      logger.error('get_sections failed', { keys, error: err.message });
       return service.formatResponse({
         sections: [],
         successCount: 0,
@@ -361,10 +361,10 @@ server.registerTool(
 );
 
 server.registerTool(
-  'get_wiki_info',
+  'get_info',
   {
     description:
-      'Get metadata about the connected wiki instance — wiki IDs, section counts, and server uptime.',
+      'Get metadata about connected instances — instance IDs, section counts, and server uptime.',
     inputSchema: {
       ...wikiIdField(),
     },
@@ -384,15 +384,15 @@ server.registerTool(
   },
   async ({ wikiId }) => {
     try {
-      requestCounts.get_wiki_info++;
+      requestCounts.get_info++;
       const result = await service.getWikiInfo(resolveWikiId(wikiId));
       // Add uptime to the response
       result.structuredContent.uptime = (Date.now() - startedAt) / 1000;
       result.content[0].text = JSON.stringify(result.structuredContent, null, 2);
-      logger.info('get_wiki_info', { wikiId });
+      logger.info('get_info', { wikiId });
       return result;
     } catch (err) {
-      logger.error('get_wiki_info failed', { error: err.message });
+      logger.error('get_info failed', { error: err.message });
       return service.formatResponse({ wikis: [], uptime: 0, error: err.message });
     }
   },
@@ -439,10 +439,10 @@ server.registerTool(
 );
 
 server.registerTool(
-  'validate_wiki',
+  'validate',
   {
     description:
-      'Run validation checks on wiki sections — finds empty sections, orphaned sections, and unlinked sections.',
+      'Run validation checks on sections — finds empty sections, orphaned sections, and unlinked sections.',
     inputSchema: {
       ...wikiIdField(),
     },
@@ -457,11 +457,11 @@ server.registerTool(
   },
   async ({ wikiId }) => {
     try {
-      requestCounts.validate_wiki++;
-      logger.info('validate_wiki', { wikiId });
+      requestCounts.validate++;
+      logger.info('validate', { wikiId });
       return await service.validateWiki(resolveWikiId(wikiId));
     } catch (err) {
-      logger.error('validate_wiki failed', { error: err.message });
+      logger.error('validate failed', { error: err.message });
       return service.formatResponse({
         healthy: false,
         emptySectionsCount: 0,
@@ -513,10 +513,10 @@ server.registerTool(
 // ─── WRITE TOOLS ─────────────────────────────────────────────────────────────
 
 server.registerTool(
-  'create_wiki',
+  'create',
   {
     description:
-      'Create a new root-level wiki section with no parent. Use this to initialize a new wiki instance or create a top-level entry point for a wiki. For nested content under an existing topic, use create_section instead.',
+      'Create a new root-level section with no parent. Use this to initialize a new instance or create a top-level entry point. For nested content under an existing topic, use create_sections instead.',
     inputSchema: {
       ...wikiIdField(),
       key: z.string().describe('Unique slug key (lowercase alphanumeric with hyphens)'),
@@ -542,11 +542,11 @@ server.registerTool(
   },
   async ({ wikiId, key, title, content, tags, relatedKeys }) => {
     try {
-      requestCounts.create_wiki++;
-      logger.info('create_wiki', { wikiId, key, title });
+      requestCounts.create++;
+      logger.info('create', { wikiId, key, title });
       return await service.createSection(resolveWikiId(wikiId), key, title, content, null, tags, relatedKeys);
     } catch (err) {
-      logger.error('create_wiki failed', { key, error: err.message });
+      logger.error('create failed', { key, error: err.message });
       return service.formatResponse({ created: false, error: err.message });
     }
   },
@@ -819,10 +819,10 @@ server.registerTool(
 // ─── IMPORT TOOL ─────────────────────────────────────────────────────────────
 
 server.registerTool(
-  'import_wiki',
+  'import',
   {
     description:
-      'Import markdown files from import/staging into the wiki database. Files must have YAML frontmatter with key, parent, and title. Successful imports move to import/success, failures to import/fail. Auto-linking runs automatically after import.',
+      'Import markdown files from import/staging into the database. Files must have YAML frontmatter with key, parent, and title. Successful imports move to import/success, failures to import/fail. Auto-linking runs automatically after import.',
     inputSchema: {},
     outputSchema: {
       total: z.number().describe('Total files processed from staging'),
@@ -836,11 +836,11 @@ server.registerTool(
   },
   async () => {
     try {
-      requestCounts.import_wiki = (requestCounts.import_wiki || 0) + 1;
-      logger.info('import_wiki');
+      requestCounts.import = (requestCounts.import || 0) + 1;
+      logger.info('import');
       return await service.importWiki();
     } catch (err) {
-      logger.error('import_wiki failed', { error: err.message });
+      logger.error('import failed', { error: err.message });
       return service.formatResponse({
         total: 0,
         success: 0,
@@ -855,10 +855,10 @@ server.registerTool(
 // ─── EXPORT TOOL ─────────────────────────────────────────────────────────────
 
 server.registerTool(
-  'export_wiki',
+  'export',
   {
     description:
-      'Export wiki sections to markdown files. Exports all wikis by default, or a specific wiki if wikiId is provided.',
+      'Export sections to markdown files. Exports from all instances by default, or from a specific instance if wikiId is provided.',
     inputSchema: {
       outputDir: z.string().describe('Directory to write exported markdown files to'),
       ...wikiIdField(),
@@ -881,11 +881,11 @@ server.registerTool(
   },
   async ({ outputDir, wikiId }) => {
     try {
-      requestCounts.export_wiki = (requestCounts.export_wiki || 0) + 1;
-      logger.info('export_wiki', { outputDir, wikiId });
+      requestCounts.export = (requestCounts.export || 0) + 1;
+      logger.info('export', { outputDir, wikiId });
       return await service.exportWiki(outputDir, resolveWikiId(wikiId));
     } catch (err) {
-      logger.error('export_wiki failed', { outputDir, error: err.message });
+      logger.error('export failed', { outputDir, error: err.message });
       return service.formatResponse({ results: [], error: err.message });
     }
   },
