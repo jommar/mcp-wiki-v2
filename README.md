@@ -70,7 +70,7 @@ Restart Claude Code after saving. The wiki tools will appear automatically.
 
 ### 3. Import existing markdown files (optional)
 
-Place markdown files with YAML frontmatter into `import/staging/`, then use the `import_wiki` tool from Claude Code, or run:
+Place markdown files with YAML frontmatter into `import/staging/`, then use the `import` tool from Claude Code, or run:
 
 ```bash
 docker exec wiki-v2-server node scripts/import-wiki-to-db.js
@@ -146,45 +146,45 @@ This pattern scales to any number of pinned instances (`notes`, `docs`, etc.) by
 
 ### Discovery
 
-| Tool              | Description                                                    |
-| ----------------- | -------------------------------------------------------------- |
-| `get_wiki_info`   | Get wiki instance metadata and section counts                  |
-| `browse_wiki`     | Browse sections grouped by parent topic                        |
-| `list_wiki`       | List all sections, optionally filtered by `wikiId` and `limit` |
+| Tool        | Description                                                    |
+| ----------- | -------------------------------------------------------------- |
+| `get_info`  | Get instance metadata and section counts                       |
+| `browse`    | Browse sections grouped by parent topic                        |
+| `list`      | List all sections, optionally filtered by `wikiId` and `limit`; includes tags and linkCount |
 
 ### Reading
 
-| Tool                | Description                                                                  |
-| ------------------- | ---------------------------------------------------------------------------- |
-| `search_wiki`       | Semantic search by meaning (falls back to keyword if embeddings unavailable); results include content snippets |
-| `get_wiki_section`  | Get a single section with content pagination; `includeBacklinks` optional    |
-| `get_wiki_sections` | Batch retrieve multiple sections (max 20 at once)                            |
+| Tool            | Description                                                                  |
+| --------------- | ---------------------------------------------------------------------------- |
+| `search`        | Semantic search by meaning (falls back to keyword if embeddings unavailable); supports `parent` filter; results include content snippets |
+| `get_section`   | Get a single section with content pagination; `includeBacklinks` optional; returns `backlinksHasMore` when backlinks are paginated |
+| `get_sections`  | Batch retrieve multiple sections (max 20 at once)                            |
 
 ### Writing
 
 | Tool              | Description                                                                   |
 | ----------------- | ----------------------------------------------------------------------------- |
-| `create_wiki`     | Create a root-level section with no parent (entry point for a new wiki instance) |
-| `create_section`  | Create a new wiki section under a parent topic (embedding auto-generated)     |
+| `create`          | Create a root-level section with no parent (entry point for a new instance)   |
 | `create_sections` | Batch-create multiple sections in parallel; all sections link to each other after creation (max 20) |
-| `update_section`  | Update an existing section (embedding auto-regenerated, history auto-tracked) |
+| `update_sections` | Batch-update existing sections (embedding auto-regenerated, history auto-tracked) |
 | `delete_section`  | Delete a section and its backlinks (run `get_backlinks` first)                |
 
 ### Import/Export
 
-| Tool          | Description                                                      |
-| ------------- | ---------------------------------------------------------------- |
-| `import_wiki` | Import markdown files from `import/staging/` (embeddings auto-generated) |
-| `export_wiki` | Export wiki sections to markdown files                           |
+| Tool     | Description                                                              |
+| -------- | ------------------------------------------------------------------------ |
+| `import` | Import markdown files from `import/staging/` (embeddings auto-generated) |
+| `export` | Export sections to markdown files                                        |
 
 ### Management
 
-| Tool                   | Description                                                    |
-| ---------------------- | -------------------------------------------------------------- |
-| `get_backlinks`        | Find sections that link to a given section                     |
-| `validate_wiki`        | Find empty, orphaned, and unlinked sections; returns counts alongside arrays |
-| `get_section_history`  | View edit history for a section (`wikiId` optional)            |
-| `auto_link_sections`   | Auto-link sections via embedding similarity (background job)   |
+| Tool                   | Description                                                                   |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `get_backlinks`        | Find sections that link to a given section; accepts `limit`, returns `hasMore` |
+| `validate`             | Find empty, orphaned, and unlinked sections; returns counts and a `healthy` boolean |
+| `get_section_history`  | View edit history for a section (`wikiId` optional)                           |
+| `auto_link_sections`   | Auto-link sections via embedding similarity (background job; returns `jobId`) |
+| `get_job_status`       | Poll the status of a background job by `jobId`                                |
 
 ### `auto_link_sections` Options
 

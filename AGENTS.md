@@ -8,42 +8,44 @@ This is a PostgreSQL-backed wiki system exposed via MCP tools. You can read, wri
 
 ### Discovery
 
-1. **`get_wiki_info`** — Check what wiki instances exist and their section counts
-2. **`browse_wiki`** — Explore sections by topic/parent
-3. **`list_wiki`** — Get all section keys (use sparingly, can be large; supports `limit` param)
+1. **`get_info`** — Check what wiki instances exist and their section counts
+2. **`browse`** — Explore sections by topic/parent
+3. **`list`** — Get all section keys (use sparingly, can be large; supports `limit` param; includes `tags` and `linkCount` per section)
 
 ### Reading
 
-4. **`search_wiki`** — Semantic search by meaning (falls back to keyword if embeddings unavailable); results include a `snippet` (first 200 chars of content) — use this to triage relevance before fetching full sections
-5. **`get_wiki_section`** — Read a specific section by key; supports `includeBacklinks` for optional backlink retrieval
-6. **`get_wiki_sections`** — Batch read multiple sections (max 20 at once)
+4. **`search`** — Semantic search by meaning (falls back to keyword if embeddings unavailable); supports optional `parent` filter; results include a `snippet` (first 200 chars of content) — use this to triage relevance before fetching full sections
+5. **`get_section`** — Read a specific section by key; supports `includeBacklinks` for optional backlink retrieval; returns `backlinksHasMore` when paginated
+6. **`get_sections`** — Batch read multiple sections (max 20 at once)
 
 ### Writing
 
-7. **`create_section`** — Create a new section (embedding auto-generated, `parent` is **required**)
-8. **`update_section`** — Update an existing section (embedding auto-regenerated, history auto-tracked)
-9. **`delete_section`** — Delete a section and all its backlinks; run `get_backlinks` first to see what would break
+7. **`create`** — Create a root-level section with no parent (entry point for a new wiki instance)
+8. **`create_sections`** — Batch-create multiple sections in parallel; all created sections auto-link to each other (max 20); set `relatedKeys` to link to existing sections
+9. **`update_sections`** — Batch-update existing sections (embedding auto-regenerated, history auto-tracked)
+10. **`delete_section`** — Delete a section and all its backlinks; run `get_backlinks` first to see what would break
 
 ### Import/Export
 
-10. **`import_wiki`** — Import markdown files from `import/staging/` into the database (embeddings auto-generated)
-11. **`export_wiki`** — Export wiki sections to markdown files
+11. **`import`** — Import markdown files from `import/staging/` into the database (embeddings auto-generated)
+12. **`export`** — Export wiki sections to markdown files
 
 ### Management
 
-12. **`get_backlinks`** — Find what sections link to a given section
-13. **`validate_wiki`** — Check for empty, orphaned, or unlinked sections; returns counts (`emptySectionsCount`, `orphanedSectionsCount`, `unlinkedSectionsCount`) alongside the full arrays
-14. **`get_section_history`** — View edit history (`wikiId` absent when `WIKI_ID` env is set; required otherwise)
-15. **`auto_link_sections`** — Auto-link sections via embedding similarity (runs in background, returns status message)
+13. **`get_backlinks`** — Find what sections link to a given section; accepts `limit`, returns `hasMore`
+14. **`validate`** — Check for empty, orphaned, or unlinked sections; returns counts (`emptySectionsCount`, `orphanedSectionsCount`, `unlinkedSectionsCount`) and a `healthy` boolean
+15. **`get_section_history`** — View edit history (`wikiId` absent when `WIKI_ID` env is set; required otherwise)
+16. **`auto_link_sections`** — Auto-link sections via embedding similarity (runs in background, returns a `jobId` for polling)
+17. **`get_job_status`** — Poll the status of a background job by `jobId`
 
 ## Workflow
 
 ### Finding Information
 
 ```
-1. search_wiki(query="your topic") → get matching keys
-2. get_wiki_section(key="matched-key") → read content
-3. If not found, try browse_wiki(topic="related topic")
+1. search(query="your topic") → get matching keys
+2. get_section(key="matched-key") → read content
+3. If not found, try browse(topic="related topic")
 ```
 
 ### Updating Documentation
@@ -51,20 +53,20 @@ This is a PostgreSQL-backed wiki system exposed via MCP tools. You can read, wri
 After completing a task (feature, bug fix, migration):
 
 ```
-1. search_wiki(query="relevant topic") → find existing section
-2. If exists: update_section(key="...", content="new content", reason="what changed")
-3. If not exists: create_section(key="new-key", title="Title", content="...", parent="...")
+1. search(query="relevant topic") → find existing section
+2. If exists: update_sections(updates=[{key="...", content="new content", reason="what changed"}])
+3. If not exists: create_sections(sections=[{key="new-key", title="Title", content="...", parent="..."}])
 ```
 
 ### Creating New Sections
 
 - **key**: lowercase alphanumeric with hyphens (e.g., `portage-backend-architecture`)
 - **wikiId**: omit if `WIKI_ID` env is set (resolved automatically); required otherwise (e.g., `user-wiki`)
-- **parent**: **required** — the parent topic/group name
+- **parent**: **required** for `create_sections` — the parent topic/group name
 - **content**: markdown format
 - **relatedKeys**: optional array of section keys to link to (auto-discovers via embedding similarity)
 
-> **CRITICAL**: Before creating, ALWAYS search for existing sections using `search_wiki` to avoid duplicates. Check if a similar section already exists — if so, use `update_section` instead. Only create new sections for genuinely new topics.
+> **CRITICAL**: Before creating, ALWAYS search for existing sections using `search` to avoid duplicates. Check if a similar section already exists — if so, use `update_sections` instead. Only create new sections for genuinely new topics.
 
 ### Backlinks & Section Links
 
@@ -124,12 +126,13 @@ Update wiki sections when:
 
 ## Tips
 
-- **Search first, browse second**: `search_wiki` is faster than scanning `list_wiki`
-- **Use snippets to triage**: `search_wiki` results include a 200-char `snippet` — read it before calling `get_wiki_section` to avoid fetching irrelevant sections
-- **Use `get_wiki_sections` for batch reads**: More efficient than multiple `get_wiki_section` calls
-- **Check `validate_wiki` periodically**: Find and clean up empty/orphaned sections
+- **Search first, browse second**: `search` is faster than scanning `list`
+- **Use snippets to triage**: `search` results include a 200-char `snippet` — read it before calling `get_section` to avoid fetching irrelevant sections
+- **Use `get_sections` for batch reads**: More efficient than multiple `get_section` calls
+- **Check `validate` periodically**: Find and clean up empty/orphaned sections
 - **Use `get_section_history` before updating**: See what changed previously
-- **Use `get_backlinks` before deleting**: Ensure you're not breaking references
-- **Use `includeBacklinks: true`** on `get_wiki_section` when you need to see what links to a section
+- **Use `get_backlinks` before deleting**: Ensure you're not breaking references; accepts `limit`, returns `hasMore` for large sets
+- **Use `includeBacklinks: true`** on `get_section` when you need to see what links to a section
+- **Poll background jobs**: `auto_link_sections` returns a `jobId` — use `get_job_status` to track progress
 - **Access is tracked**: Every read increments `access_count` and updates `last_accessed`
 - **Background relinking**: Sections are auto-relinked on read via embedding similarity — no manual intervention needed
