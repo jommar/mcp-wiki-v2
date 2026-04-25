@@ -352,8 +352,9 @@ export async function getWikiInfo(wikiId = null) {
 
 /**
  * Get backlinks for a section (what other sections link to it).
+ * Fetches limit+1 to detect hasMore, then trims.
  */
-export async function getBacklinks(key, wikiId = null) {
+export async function getBacklinks(key, wikiId = null, limit = 50) {
   const params = [key];
   let whereClause = 'WHERE sl.to_key = $1';
   if (wikiId) {
@@ -367,19 +368,28 @@ export async function getBacklinks(key, wikiId = null) {
     JOIN wiki_sections ws ON ws.wiki_id = sl.from_wiki_id AND ws.key = sl.from_key
     ${whereClause}
     ORDER BY ws.title
+    LIMIT $${params.length + 1}
   `;
+  params.push(limit + 1);
 
   const { rows } = await pool.query(query, params);
-  return rows.map((r) => ({
-    key: r.from_key,
-    wikiId: r.from_wiki_id,
-    title: r.from_title,
-    parent: r.from_parent || 'Root',
-  }));
+  const hasMore = !!(rows.length > limit);
+  if (hasMore) rows.pop();
+
+  return {
+    backlinks: rows.map((r) => ({
+      key: r.from_key,
+      wikiId: r.from_wiki_id,
+      title: r.from_title,
+      parent: r.from_parent || 'Root',
+    })),
+    hasMore,
+  };
 }
 
 /**
  * Validate wiki health (empty sections, orphans, etc).
+ * Returns counts only — no full row data.
  */
 export async function validateWiki(wikiId = null) {
   const params = [];
@@ -389,48 +399,41 @@ export async function validateWiki(wikiId = null) {
     params.push(wikiId);
   }
 
-  const results = {};
-
-  // Empty sections
-  const { rows: empty } = await pool.query(
-    `
-    SELECT key, title FROM wiki_sections
-    ${whereClause} ${whereClause ? 'AND' : 'WHERE'} content = '' OR content IS NULL
-  `,
+  const { rows: emptyRows } = await pool.query(
+    `SELECT COUNT(*) as count FROM wiki_sections
+     ${whereClause} ${whereClause ? 'AND' : 'WHERE'} (content = '' OR content IS NULL)`,
     params,
   );
-  results.emptySections = empty.map((r) => ({ key: r.key, title: r.title }));
 
-  // Orphaned sections (no parent, no children, no backlinks)
-  const { rows: orphans } = await pool.query(
-    `
-    SELECT s.key, s.title, s.parent
-    FROM wiki_sections s
-    ${whereClause} ${whereClause ? 'AND' : 'WHERE'} (
-      s.parent IS NULL
-      AND NOT EXISTS (SELECT 1 FROM wiki_sections c WHERE c.parent = s.title AND c.wiki_id = s.wiki_id)
-      AND NOT EXISTS (SELECT 1 FROM section_links sl WHERE sl.to_key = s.key AND sl.to_wiki_id = s.wiki_id)
-    )
-  `,
+  const { rows: orphanRows } = await pool.query(
+    `SELECT COUNT(*) as count FROM wiki_sections s
+     ${whereClause} ${whereClause ? 'AND' : 'WHERE'} (
+       s.parent IS NULL
+       AND NOT EXISTS (SELECT 1 FROM wiki_sections c WHERE c.parent = s.title AND c.wiki_id = s.wiki_id)
+       AND NOT EXISTS (SELECT 1 FROM section_links sl WHERE sl.to_key = s.key AND sl.to_wiki_id = s.wiki_id)
+     )`,
     params,
   );
-  results.orphanedSections = orphans.map((r) => ({ key: r.key, title: r.title }));
 
-  // Sections with no backlinks (not linked from anywhere)
-  const { rows: unlinked } = await pool.query(
-    `
-    SELECT s.key, s.title
-    FROM wiki_sections s
-    ${whereClause} ${whereClause ? 'AND' : 'WHERE'} NOT EXISTS (
-      SELECT 1 FROM section_links sl WHERE sl.to_key = s.key AND sl.to_wiki_id = s.wiki_id
-    )
-    AND s.parent IS NOT NULL
-  `,
+  const { rows: unlinkedRows } = await pool.query(
+    `SELECT COUNT(*) as count FROM wiki_sections s
+     ${whereClause} ${whereClause ? 'AND' : 'WHERE'} NOT EXISTS (
+       SELECT 1 FROM section_links sl WHERE sl.to_key = s.key AND sl.to_wiki_id = s.wiki_id
+     )
+     AND s.parent IS NOT NULL`,
     params,
   );
-  results.unlinkedSections = unlinked.map((r) => ({ key: r.key, title: r.title }));
 
-  return results;
+  const emptyCount = parseInt(emptyRows[0].count);
+  const orphanCount = parseInt(orphanRows[0].count);
+  const unlinkedCount = parseInt(unlinkedRows[0].count);
+
+  return {
+    emptySectionsCount: emptyCount,
+    orphanedSectionsCount: orphanCount,
+    unlinkedSectionsCount: unlinkedCount,
+    healthy: !!(emptyCount === 0 && orphanCount === 0 && unlinkedCount === 0),
+  };
 }
 
 /**

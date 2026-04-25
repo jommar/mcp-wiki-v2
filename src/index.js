@@ -277,6 +277,10 @@ server.registerTool(
         )
         .optional()
         .describe('Sections that link to this section'),
+      backlinksHasMore: z
+        .boolean()
+        .optional()
+        .describe('True if more backlinks exist beyond the returned list'),
       error: z.string().optional().describe('Error message if section not found or key invalid'),
       suggestions: z.array(z.string()).optional().describe('Similar keys when section not found'),
     },
@@ -403,6 +407,7 @@ server.registerTool(
     inputSchema: {
       key: z.string().describe('The section key to find backlinks for'),
       ...wikiIdField(),
+      limit: z.number().optional().default(50).describe('Maximum backlinks to return (default 50)'),
     },
     outputSchema: {
       backlinks: z
@@ -415,19 +420,20 @@ server.registerTool(
           }),
         )
         .describe('Sections that reference this one'),
-      count: z.number().describe('Number of backlinks'),
+      count: z.number().describe('Number of backlinks returned'),
+      hasMore: z.boolean().describe('True if more backlinks exist beyond this limit'),
       error: z.string().optional().describe('Error message if request failed'),
     },
     annotations: readOnlyAnnotations,
   },
-  async ({ key, wikiId }) => {
+  async ({ key, wikiId, limit }) => {
     try {
       requestCounts.get_backlinks++;
-      logger.info('get_backlinks', { key, wikiId });
-      return await service.getBacklinks(key, resolveWikiId(wikiId));
+      logger.info('get_backlinks', { key, wikiId, limit });
+      return await service.getBacklinks(key, resolveWikiId(wikiId), limit);
     } catch (err) {
       logger.error('get_backlinks failed', { key, error: err.message });
-      return service.formatResponse({ backlinks: [], count: 0, error: err.message });
+      return service.formatResponse({ backlinks: [], count: 0, hasMore: false, error: err.message });
     }
   },
 );
@@ -441,33 +447,10 @@ server.registerTool(
       ...wikiIdField(),
     },
     outputSchema: {
-      emptySections: z
-        .array(
-          z.object({
-            key: z.string(),
-            title: z.string(),
-          }),
-        )
-        .describe('Sections with no content'),
-      orphanedSections: z
-        .array(
-          z.object({
-            key: z.string(),
-            title: z.string(),
-          }),
-        )
-        .describe('Sections with no parent, children, or backlinks'),
-      unlinkedSections: z
-        .array(
-          z.object({
-            key: z.string(),
-            title: z.string(),
-          }),
-        )
-        .describe('Sections not linked from any other section'),
-      emptySectionsCount: z.number().describe('Number of empty sections'),
-      orphanedSectionsCount: z.number().describe('Number of orphaned sections'),
-      unlinkedSectionsCount: z.number().describe('Number of unlinked sections'),
+      healthy: z.boolean().describe('True if no issues found'),
+      emptySectionsCount: z.number().describe('Number of sections with no content'),
+      orphanedSectionsCount: z.number().describe('Number of sections with no parent, children, or backlinks'),
+      unlinkedSectionsCount: z.number().describe('Number of sections not linked from any other section'),
       error: z.string().optional().describe('Error message if request failed'),
     },
     annotations: readOnlyAnnotations,
@@ -480,9 +463,10 @@ server.registerTool(
     } catch (err) {
       logger.error('validate_wiki failed', { error: err.message });
       return service.formatResponse({
-        emptySections: [],
-        orphanedSections: [],
-        unlinkedSections: [],
+        healthy: false,
+        emptySectionsCount: 0,
+        orphanedSectionsCount: 0,
+        unlinkedSectionsCount: 0,
         error: err.message,
       });
     }

@@ -113,8 +113,11 @@ export async function getWikiSection(key, wikiId, offset, limit, includeBacklink
   }
 
   let backlinks;
+  let backlinksHasMore;
   if (includeBacklinks) {
-    backlinks = await db.getBacklinks(key, wikiId || null);
+    const result = await db.getBacklinks(key, wikiId || null);
+    backlinks = result.backlinks;
+    backlinksHasMore = !!result.hasMore;
   }
 
   return formatResponse({
@@ -132,7 +135,7 @@ export async function getWikiSection(key, wikiId, offset, limit, includeBacklink
     nextOffset: section.nextOffset,
     updatedAt: section.updatedAt,
     relatedSections,
-    ...(includeBacklinks && { backlinks }),
+    ...(includeBacklinks && { backlinks, backlinksHasMore }),
   });
 }
 
@@ -181,19 +184,14 @@ export async function getWikiInfo(wikiId) {
   return formatResponse({ wikis });
 }
 
-export async function getBacklinks(key, wikiId) {
-  const backlinks = await db.getBacklinks(key, wikiId || null);
-  return formatResponse({ backlinks, count: backlinks.length });
+export async function getBacklinks(key, wikiId, limit = 50) {
+  const result = await db.getBacklinks(key, wikiId || null, limit);
+  return formatResponse({ ...result, count: result.backlinks.length });
 }
 
 export async function validateWiki(wikiId) {
   const results = await db.validateWiki(wikiId || null);
-  return formatResponse({
-    ...results,
-    emptySectionsCount: results.emptySections.length,
-    orphanedSectionsCount: results.orphanedSections.length,
-    unlinkedSectionsCount: results.unlinkedSections.length,
-  });
+  return formatResponse(results);
 }
 
 export async function getSectionHistory(wikiId, key, limit) {
