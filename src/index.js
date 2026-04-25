@@ -46,17 +46,21 @@ const requestCounts = {
   create_section: 0,
   create_sections: 0,
   update_section: 0,
+  update_sections: 0,
   delete_section: 0,
   get_backlinks: 0,
   validate_wiki: 0,
   get_section_history: 0,
   auto_link_sections: 0,
+  get_job_status: 0,
   import_wiki: 0,
   export_wiki: 0,
 };
 
-// Track background tasks for graceful shutdown
+// Track background tasks for graceful shutdown and status polling
 const backgroundTasks = new Map(); // wikiId -> Promise
+const jobStatuses = new Map(); // jobId -> { wikiId, status, startedAt, completedAt, error }
+let jobCounter = 0;
 
 const readOnlyAnnotations = { readOnlyHint: true };
 
@@ -88,7 +92,9 @@ server.registerTool(
           z.object({
             ...sectionRefSchema,
             wikiId: z.string().describe('Wiki instance ID'),
+            tags: z.array(z.string()).describe('Tags for categorization'),
             contentLength: z.number().describe('Content length in characters'),
+            linkCount: z.number().describe('Number of outgoing section links'),
           }),
         )
         .describe('All wiki sections'),
@@ -173,6 +179,10 @@ server.registerTool(
         .min(1)
         .max(200)
         .describe('Search query — can be natural language or keywords'),
+      parent: z
+        .string()
+        .optional()
+        .describe('Filter by parent topic (e.g., "Portage Backend")'),
       ...wikiIdField(),
       fuzzy: z.boolean().optional().default(false).describe('Enable fuzzy matching for typos'),
       limit: z.number().optional().default(20).describe('Maximum number of results to return'),
@@ -196,11 +206,11 @@ server.registerTool(
     },
     annotations: readOnlyAnnotations,
   },
-  async ({ query, wikiId, fuzzy, limit }) => {
+  async ({ query, wikiId, parent, fuzzy, limit }) => {
     try {
       requestCounts.search_wiki++;
-      logger.info('search_wiki', { query, wikiId, fuzzy, limit });
-      return await service.searchWiki(query, resolveWikiId(wikiId), fuzzy, limit);
+      logger.info('search_wiki', { query, wikiId, parent, fuzzy, limit });
+      return await service.searchWiki(query, resolveWikiId(wikiId), parent, fuzzy, limit);
     } catch (err) {
       logger.error('search_wiki failed', { query, error: err.message });
       return service.formatResponse({ results: [], count: 0, error: err.message });
@@ -559,48 +569,6 @@ server.registerTool(
 );
 
 server.registerTool(
-  'create_section',
-  {
-    description:
-      'Create a new bite-sized wiki section. CRITICAL: Before creating, ALWAYS search for existing sections using search_wiki to avoid duplicates. Check if a similar section already exists — if so, use update_section instead. Only create new sections for genuinely new topics.',
-    inputSchema: {
-      ...wikiIdField(),
-      key: z.string().describe('Unique slug key (lowercase alphanumeric with hyphens)'),
-      title: z.string().describe('Display title'),
-      content: z
-        .string()
-        .describe(
-          'Markdown content. KEEP IT SHORT AND BITE-SIZED. Maximum 3-4 bullet points or sentences per section. Do not combine multiple broad categories here.',
-        ),
-      parent: z.string().describe('Parent topic name'),
-      tags: z.array(z.string()).optional().describe('Tags for categorization'),
-      relatedKeys: z
-        .array(z.string())
-        .optional()
-        .describe('Section keys to link to (populates section_links)'),
-    },
-    outputSchema: {
-      key: z.string().optional().describe('Created section key'),
-      wikiId: z.string().optional().describe('Wiki instance ID'),
-      title: z.string().optional().describe('Section title'),
-      parent: z.string().optional().describe('Parent topic name'),
-      created: z.boolean().describe('Whether the section was created'),
-      error: z.string().optional().describe('Error message if creation failed'),
-    },
-  },
-  async ({ wikiId, key, title, content, parent, tags, relatedKeys }) => {
-    try {
-      requestCounts.create_section++;
-      logger.info('create_section', { wikiId, key, title });
-      return await service.createSection(resolveWikiId(wikiId), key, title, content, parent, tags, relatedKeys);
-    } catch (err) {
-      logger.error('create_section failed', { key, error: err.message });
-      return service.formatResponse({ created: false, error: err.message });
-    }
-  },
-);
-
-server.registerTool(
   'create_sections',
   {
     description:
@@ -646,49 +614,47 @@ server.registerTool(
 );
 
 server.registerTool(
-  'update_section',
+  'update_sections',
   {
     description:
-      'Update an existing wiki section. Only provide fields you want to change. At least one of content, title, parent, tags, or relatedKeys must be provided.',
+      'Update multiple wiki sections at once. Only provide fields you want to change per section. At least one of content, title, parent, tags, or relatedKeys must be provided per entry. Use instead of multiple update_section calls for batch maintenance.',
     inputSchema: {
       ...wikiIdField(),
-      key: z.string().describe('Section key to update'),
-      content: z.string().optional().describe('New markdown content'),
-      title: z.string().optional().describe('New display title'),
-      parent: z.string().optional().describe('New parent topic'),
-      tags: z.array(z.string()).optional().describe('New tags'),
-      reason: z.string().optional().describe('Reason for the change (recorded in history)'),
-      relatedKeys: z
-        .array(z.string())
-        .optional()
-        .describe('Replace outgoing links with these section keys'),
+      updates: z
+        .array(
+          z.object({
+            key: z.string().describe('Section key to update'),
+            content: z.string().optional().describe('New markdown content'),
+            title: z.string().optional().describe('New display title'),
+            parent: z.string().optional().describe('New parent topic'),
+            tags: z.array(z.string()).optional().describe('New tags'),
+            reason: z.string().optional().describe('Reason for the change (recorded in history)'),
+            relatedKeys: z.array(z.string()).optional().describe('Replace outgoing links with these section keys'),
+          }),
+        )
+        .min(1)
+        .max(service.MAX_BATCH_SECTIONS)
+        .describe(`Array of section updates (max ${service.MAX_BATCH_SECTIONS})`),
     },
     outputSchema: {
-      key: z.string().optional().describe('Updated section key'),
-      wikiId: z.string().optional().describe('Wiki instance ID'),
-      title: z.string().optional().describe('Updated section title'),
-      updated: z.boolean().describe('Whether the section was updated'),
-      error: z.string().optional().describe('Error message if update failed'),
+      updated: z
+        .array(z.object({ key: z.string(), wikiId: z.string(), title: z.string() }))
+        .describe('Successfully updated sections'),
+      errors: z
+        .array(z.object({ key: z.string(), error: z.string() }))
+        .describe('Sections that failed to update'),
+      successCount: z.number().describe('Number of sections updated'),
+      errorCount: z.number().describe('Number of sections that failed'),
     },
   },
-  async ({ wikiId, key, content, title, parent, tags, reason, relatedKeys }) => {
+  async ({ wikiId, updates }) => {
     try {
-      const resolvedWikiId = resolveWikiId(wikiId);
-      requestCounts.update_section++;
-      logger.info('update_section', { wikiId: resolvedWikiId, key, reason });
-      return await service.updateSection(
-        resolvedWikiId,
-        key,
-        content,
-        title,
-        parent,
-        tags,
-        reason,
-        relatedKeys,
-      );
+      requestCounts.update_sections = (requestCounts.update_sections || 0) + 1;
+      logger.info('update_sections', { wikiId, count: updates.length });
+      return await service.updateSections(resolveWikiId(wikiId), updates);
     } catch (err) {
-      logger.error('update_section failed', { key, error: err.message });
-      return service.formatResponse({ updated: false, error: err.message });
+      logger.error('update_sections failed', { wikiId, error: err.message });
+      return service.formatResponse({ updated: [], errors: [], successCount: 0, errorCount: updates.length });
     }
   },
 );
@@ -729,7 +695,7 @@ server.registerTool(
   'auto_link_sections',
   {
     description:
-      'Automatically find related sections using vector embeddings and link sections that lack them. Uses cosine similarity on stored embeddings. Always runs in the background — returns a status message immediately. Only one run per wiki is allowed at a time; calling again while in progress returns an error.',
+      'Automatically find related sections using vector embeddings and link sections that lack them. Uses cosine similarity on stored embeddings. Runs in the background — returns a jobId for status polling. Only one run per wiki is allowed at a time; calling again while in progress returns an error.',
     inputSchema: {
       ...wikiIdField(),
       minSimilarity: z
@@ -759,7 +725,8 @@ server.registerTool(
         .describe('Process sections in parallel (default: true)'),
     },
     outputSchema: z.object({
-      message: z.string().describe('Status message'),
+      jobId: z.string().optional().describe('Job ID for status polling via get_job_status'),
+      message: z.string().optional().describe('Status message'),
       error: z.string().optional().describe('Error message if request failed'),
     }),
   },
@@ -778,22 +745,41 @@ server.registerTool(
         });
       }
 
+      const jobId = `job-${++jobCounter}`;
+      const startedAt = new Date().toISOString();
+
+      // Register job status
+      jobStatuses.set(jobId, { wikiId: resolvedWikiId, status: 'running', startedAt });
+
       // Run in background and track for shutdown
       const task = service.autoLinkSections(resolvedWikiId, { minSimilarity, maxLinks, override, reembed, parallel });
       backgroundTasks.set(taskKey, task);
       task
         .then(() => {
-          logger.info('auto_link_sections completed', { wikiId: resolvedWikiId });
+          logger.info('auto_link_sections completed', { wikiId: resolvedWikiId, jobId });
+          const job = jobStatuses.get(jobId);
+          if (job) {
+            job.status = 'completed';
+            job.completedAt = new Date().toISOString();
+          }
         })
         .catch((err) => {
-          logger.error('auto_link_sections failed (background)', { wikiId: resolvedWikiId, error: err.message });
+          logger.error('auto_link_sections failed (background)', { wikiId: resolvedWikiId, jobId, error: err.message });
+          const job = jobStatuses.get(jobId);
+          if (job) {
+            job.status = 'failed';
+            job.error = err.message;
+            job.completedAt = new Date().toISOString();
+          }
         })
         .finally(() => {
           backgroundTasks.delete(taskKey);
+          setTimeout(() => jobStatuses.delete(jobId), 60 * 60 * 1000);
         });
 
       return service.formatResponse({
-        message: 'Auto-linking is running in the background. Results will not be sent back.',
+        jobId,
+        message: 'Auto-linking is running in the background. Poll status with get_job_status.',
       });
     } catch (err) {
       logger.error('auto_link_sections failed', { wikiId, error: err.message });
@@ -801,6 +787,47 @@ server.registerTool(
         message: '',
         error: err.message,
       });
+    }
+  },
+);
+
+server.registerTool(
+  'get_job_status',
+  {
+    description:
+      'Check the status of a background job (e.g., auto_link_sections). Returns running, completed, or failed.',
+    inputSchema: {
+      jobId: z.string().describe('Job ID returned by auto_link_sections'),
+    },
+    outputSchema: z.object({
+      jobId: z.string().describe('Job ID'),
+      wikiId: z.string().optional().describe('Wiki instance ID'),
+      status: z.enum(['running', 'completed', 'failed', 'not_found']).describe('Current job status'),
+      startedAt: z.string().optional().describe('ISO timestamp when job started'),
+      completedAt: z.string().optional().describe('ISO timestamp when job completed or failed'),
+      error: z.string().optional().describe('Error message if job failed'),
+    }),
+    annotations: readOnlyAnnotations,
+  },
+  ({ jobId }) => {
+    try {
+      requestCounts.get_job_status = (requestCounts.get_job_status || 0) + 1;
+      logger.info('get_job_status', { jobId });
+      const job = jobStatuses.get(jobId);
+      if (!job) {
+        return service.formatResponse({ jobId, status: 'not_found' });
+      }
+      return service.formatResponse({
+        jobId,
+        wikiId: job.wikiId,
+        status: job.status,
+        startedAt: job.startedAt,
+        completedAt: job.completedAt,
+        error: job.error,
+      });
+    } catch (err) {
+      logger.error('get_job_status failed', { jobId, error: err.message });
+      return service.formatResponse({ jobId, status: 'not_found', error: err.message });
     }
   },
 );

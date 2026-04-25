@@ -10,6 +10,7 @@ import { getEmbedding } from './embedding.js';
 // Constants
 export const MAX_BATCH_KEYS = 20;
 export const MAX_BATCH_SECTIONS = 20;
+export const BATCH_SIZE = 5;
 export const MAX_CONTENT_LENGTH = 8000;
 export const MAX_CONTENT_SIZE = 50000; // 50KB hard limit for writes
 export const KEY_PATTERN = /^[a-z0-9-]+$/;
@@ -58,8 +59,8 @@ export async function browseWiki(topic, wikiId, limit) {
   return formatResponse({ groups, count: sections.length });
 }
 
-export async function searchWiki(query, wikiId, fuzzy, limit) {
-  const results = await db.searchSections(query, { wikiId: wikiId || null, fuzzy, limit });
+export async function searchWiki(query, wikiId, parent, fuzzy, limit) {
+  const results = await db.searchSections(query, { wikiId: wikiId || null, parent: parent || null, fuzzy, limit });
 
   if (results.length === 0) {
     const similar = await db.findSimilar(query, wikiId || null);
@@ -243,15 +244,13 @@ export async function createSection(wikiId, key, title, content, parent, tags, r
   throw new Error(`Failed to create section '${key}' in ${wikiId}`);
 }
 
-const CREATE_SECTIONS_BATCH_SIZE = 5;
-
 export async function createSections(wikiId, sections) {
   const created = [];
   const errors = [];
 
-  // Phase 1: create in batches of CREATE_SECTIONS_BATCH_SIZE to reduce streaming window
-  for (let i = 0; i < sections.length; i += CREATE_SECTIONS_BATCH_SIZE) {
-    const batch = sections.slice(i, i + CREATE_SECTIONS_BATCH_SIZE);
+  // Phase 1: create in batches of BATCH_SIZE to reduce streaming window
+  for (let i = 0; i < sections.length; i += BATCH_SIZE) {
+    const batch = sections.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
       batch.map(async (s) => {
         const keyError = validateKey(s.key);
@@ -301,6 +300,61 @@ export async function createSections(wikiId, sections) {
     created: created.map(({ key, title }) => ({ key, wikiId, title })),
     errors,
     successCount: created.length,
+    errorCount: errors.length,
+  });
+}
+
+export async function updateSections(wikiId, updates) {
+  const updated = [];
+  const errors = [];
+
+  // Process in batches of BATCH_SIZE to reduce streaming window
+  for (let i = 0; i < updates.length; i += BATCH_SIZE) {
+    const batch = updates.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (u) => {
+        const keyError = validateKey(u.key);
+        if (keyError) throw new Error(keyError);
+        if (u.content !== undefined && u.content.length > MAX_CONTENT_SIZE) {
+          throw new Error(`Content too large (${u.content.length} chars, max ${MAX_CONTENT_SIZE})`);
+        }
+
+        const hasChanges = u.content !== undefined || u.title !== undefined ||
+          u.parent !== undefined || u.tags !== undefined || u.relatedKeys !== undefined;
+        if (!hasChanges) throw new Error('No fields provided to update');
+
+        const result = await db.updateSection({
+          wikiId,
+          key: u.key,
+          content: u.content,
+          title: u.title,
+          parent: u.parent,
+          tags: u.tags,
+          reason: u.reason,
+          relatedKeys: u.relatedKeys,
+        });
+        if (result && result.notFound) throw new Error(`Section '${u.key}' not found in ${wikiId}`);
+        if (result && result.noChanges) throw new Error('No fields provided to update');
+        if (!result || !result.key) throw new Error(`Failed to update section '${u.key}'`);
+        return result;
+      }),
+    );
+
+    for (let j = 0; j < batch.length; j++) {
+      const r = results[j];
+      const u = batch[j];
+      if (r.status === 'fulfilled') {
+        updated.push({ key: u.key, title: r.value.title });
+      } else {
+        errors.push({ key: u.key, error: r.reason?.message ?? String(r.reason) });
+      }
+    }
+  }
+
+  return formatResponse({
+    updated: updated.map(({ key, title }) => ({ key, wikiId, title })),
+    errors,
+    successCount: updated.length,
     errorCount: errors.length,
   });
 }

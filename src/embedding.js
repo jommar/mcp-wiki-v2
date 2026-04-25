@@ -9,7 +9,7 @@ let loadingPromise = null;
  * The model is downloaded once and cached locally.
  * Handles concurrent calls by sharing the loading promise.
  */
-async function getExtractor() {
+function getExtractor() {
   if (extractor) {
     return extractor;
   }

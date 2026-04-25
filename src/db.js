@@ -25,16 +25,22 @@ pool.query('CREATE EXTENSION IF NOT EXISTS fuzzystrmatch').catch(() => {
  */
 export async function listSections(wikiId = null, limit = 100) {
   const query = wikiId
-    ? 'SELECT key, wiki_id, parent, title, metadata, LENGTH(content) as content_length FROM wiki_sections WHERE wiki_id = $1 ORDER BY key LIMIT $2'
-    : 'SELECT key, wiki_id, parent, title, metadata, LENGTH(content) as content_length FROM wiki_sections ORDER BY wiki_id, key LIMIT $1';
+    ? `SELECT key, wiki_id, parent, title, tags, metadata, LENGTH(content) as content_length,
+              (SELECT COUNT(*) FROM section_links sl WHERE sl.from_wiki_id = ws.wiki_id AND sl.from_key = ws.key) as link_count
+       FROM wiki_sections ws WHERE wiki_id = $1 ORDER BY key LIMIT $2`
+    : `SELECT key, wiki_id, parent, title, tags, metadata, LENGTH(content) as content_length,
+              (SELECT COUNT(*) FROM section_links sl WHERE sl.from_wiki_id = ws.wiki_id AND sl.from_key = ws.key) as link_count
+       FROM wiki_sections ws ORDER BY wiki_id, key LIMIT $1`;
   const { rows } = await pool.query(query, wikiId ? [wikiId, limit] : [limit]);
   return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
     parent: r.parent || 'Root',
     title: r.title,
+    tags: r.tags || [],
     breadcrumbs: r.metadata?.breadcrumbs || [],
     contentLength: r.content_length,
+    linkCount: parseInt(r.link_count) || 0,
   }));
 }
 
@@ -81,15 +87,20 @@ export async function browseSections(topic, wikiId = null, limit = 100) {
 /**
  * Semantic search using vector embeddings (cosine distance).
  */
-async function searchSemantic(query, { wikiId, limit }) {
+async function searchSemantic(query, { wikiId, parent, limit }) {
   try {
     const embedding = await getEmbedding(query);
     const params = [JSON.stringify(embedding)];
-    let whereClause = '';
+    const conditions = ['embedding IS NOT NULL'];
     if (wikiId) {
-      whereClause = `WHERE wiki_id = $2`;
+      conditions.push(`wiki_id = $${params.length + 1}`);
       params.push(wikiId);
     }
+    if (parent) {
+      conditions.push(`LOWER(parent) LIKE $${params.length + 1}`);
+      params.push(`%${parent.toLowerCase()}%`);
+    }
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     const searchQuery = `
       SELECT key, wiki_id, parent, title, metadata->'breadcrumbs' as breadcrumbs,
@@ -97,7 +108,7 @@ async function searchSemantic(query, { wikiId, limit }) {
              LENGTH(content) as content_length,
              LEFT(content, 200) as snippet
       FROM wiki_sections
-      ${whereClause} ${whereClause ? 'AND' : 'WHERE'} embedding IS NOT NULL
+      ${whereClause}
       ORDER BY embedding <=> $1
       LIMIT $${params.length + 1}
     `;
@@ -124,14 +135,14 @@ async function searchSemantic(query, { wikiId, limit }) {
  * Search sections using full-text search (tsvector).
  * Tries semantic search first; falls back to keyword if no embeddings exist.
  */
-export async function searchSections(query, { wikiId = null, fuzzy = false, limit = 20 } = {}) {
+export async function searchSections(query, { wikiId = null, parent = null, fuzzy = false, limit = 20 } = {}) {
   if (fuzzy) {
     // Fall back to trigram similarity for fuzzy matching
-    return searchFuzzy(query, { wikiId, limit });
+    return searchFuzzy(query, { wikiId, parent, limit });
   }
 
   // Try semantic search first
-  const semanticResults = await searchSemantic(query, { wikiId, limit });
+  const semanticResults = await searchSemantic(query, { wikiId, parent, limit });
 
   // If we got results with meaningful similarity, use them
   if (semanticResults.length > 0 && semanticResults.some((r) => r.rank > 0.1)) {
@@ -140,12 +151,17 @@ export async function searchSections(query, { wikiId = null, fuzzy = false, limi
 
   // Fall back to keyword search
   const params = [];
-  let whereClause = '';
+  const conditions = [];
 
   if (wikiId) {
-    whereClause = `WHERE wiki_id = $${params.length + 1}`;
+    conditions.push(`wiki_id = $${params.length + 1}`);
     params.push(wikiId);
   }
+  if (parent) {
+    conditions.push(`LOWER(parent) LIKE $${params.length + 1}`);
+    params.push(`%${parent.toLowerCase()}%`);
+  }
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   // Build tsquery from user input
   const searchTerms = query
@@ -183,14 +199,19 @@ export async function searchSections(query, { wikiId = null, fuzzy = false, limi
 /**
  * Fuzzy search using trigram similarity.
  */
-async function searchFuzzy(query, { wikiId, limit }) {
+async function searchFuzzy(query, { wikiId, parent, limit }) {
   const params = [];
-  let whereClause = '';
+  const conditions = [];
 
   if (wikiId) {
-    whereClause = `WHERE wiki_id = $${params.length + 1}`;
+    conditions.push(`wiki_id = $${params.length + 1}`);
     params.push(wikiId);
   }
+  if (parent) {
+    conditions.push(`LOWER(parent) LIKE $${params.length + 1}`);
+    params.push(`%${parent.toLowerCase()}%`);
+  }
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const searchQuery = `
     SELECT key, wiki_id, parent, title, metadata->'breadcrumbs' as breadcrumbs,
