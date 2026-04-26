@@ -2,12 +2,14 @@ import pkg from 'pg';
 const { Pool } = pkg;
 import { logger } from '../logger.js';
 import { getEmbedding } from './embedding.js';
+import { requestContext } from './context.js';
 
 // Constants for auto-linking and access tracking
 const MAX_ACCESS_COUNT = 9999;
 const MAX_LINKS_PER_SECTION = 4;
 
-const pool = new Pool({
+// Global pool — used for stdio mode and server startup migrations
+const globalPool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5433'),
   user: process.env.DB_USER || 'wiki',
@@ -15,10 +17,14 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'wiki',
 });
 
-// Enable required extensions
-pool.query('CREATE EXTENSION IF NOT EXISTS fuzzystrmatch').catch(() => {
-  // Ignore - extension may already exist or require superuser
-});
+// Enable extensions on the global pool at startup
+globalPool.query('CREATE EXTENSION IF NOT EXISTS fuzzystrmatch').catch(() => {});
+
+// Per-request pool: from authenticated client context (HTTP) or global (stdio)
+function getPool() {
+  const ctx = requestContext.getStore();
+  return ctx?.pool ?? globalPool;
+}
 
 /**
  * List all sections with optional wiki_id filter.
@@ -31,7 +37,7 @@ export async function listSections(wikiId = null, limit = 100) {
     : `SELECT key, wiki_id, parent, title, tags, metadata, LENGTH(content) as content_length,
               (SELECT COUNT(*) FROM section_links sl WHERE sl.from_wiki_id = ws.wiki_id AND sl.from_key = ws.key) as link_count
        FROM wiki_sections ws ORDER BY wiki_id, key LIMIT $1`;
-  const { rows } = await pool.query(query, wikiId ? [wikiId, limit] : [limit]);
+  const { rows } = await getPool().query(query, wikiId ? [wikiId, limit] : [limit]);
   return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
@@ -73,7 +79,7 @@ export async function browseSections(topic, wikiId = null, limit = 100) {
   query += ' ORDER BY parent, key LIMIT $' + (params.length + 1);
   params.push(limit);
 
-  const { rows } = await pool.query(query, params);
+  const { rows } = await getPool().query(query, params);
   return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
@@ -114,7 +120,7 @@ async function searchSemantic(query, { wikiId, parent, limit }) {
     `;
     params.push(limit);
 
-    const { rows } = await pool.query(searchQuery, params);
+    const { rows } = await getPool().query(searchQuery, params);
     return rows.map((r) => ({
       key: r.key,
       wikiId: r.wiki_id,
@@ -183,7 +189,7 @@ export async function searchSections(query, { wikiId = null, parent = null, fuzz
   `;
   params.push(searchTerms, limit);
 
-  const { rows } = await pool.query(searchQuery, params);
+  const { rows } = await getPool().query(searchQuery, params);
   return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
@@ -232,7 +238,7 @@ async function searchFuzzy(query, { wikiId, parent, limit }) {
   `;
   params.push(query, limit);
 
-  const { rows } = await pool.query(searchQuery, params);
+  const { rows } = await getPool().query(searchQuery, params);
   return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
@@ -266,7 +272,7 @@ export async function getSection(key, { wikiId = null, offset = 0, limit = 8000 
     ${whereClause}
   `;
 
-  const { rows } = await pool.query(query, params);
+  const { rows } = await getPool().query(query, params);
   if (rows.length === 0) return null;
 
   const row = rows[0];
@@ -311,7 +317,7 @@ export async function getSections(keys, { wikiId = null, truncateLimit = 8000 } 
     ORDER BY array_position($1, key)
   `;
 
-  const { rows } = await pool.query(query, params);
+  const { rows } = await getPool().query(query, params);
   return rows.map((r) => {
     const truncated = r.total_length > truncateLimit;
     return {
@@ -334,14 +340,14 @@ export async function getSections(keys, { wikiId = null, truncateLimit = 8000 } 
  */
 export async function getWikiInfo(wikiId = null) {
   if (wikiId) {
-    const { rows } = await pool.query(
+    const { rows } = await getPool().query(
       'SELECT COUNT(*) as section_count FROM wiki_sections WHERE wiki_id = $1',
       [wikiId],
     );
     return { wikiId, sectionCount: parseInt(rows[0].section_count) };
   }
 
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     'SELECT wiki_id, COUNT(*) as section_count FROM wiki_sections GROUP BY wiki_id ORDER BY wiki_id',
   );
   return rows.map((r) => ({
@@ -372,7 +378,7 @@ export async function getBacklinks(key, wikiId = null, limit = 50) {
   `;
   params.push(limit + 1);
 
-  const { rows } = await pool.query(query, params);
+  const { rows } = await getPool().query(query, params);
   const hasMore = !!(rows.length > limit);
   if (hasMore) rows.pop();
 
@@ -399,13 +405,13 @@ export async function validateWiki(wikiId = null) {
     params.push(wikiId);
   }
 
-  const { rows: emptyRows } = await pool.query(
+  const { rows: emptyRows } = await getPool().query(
     `SELECT COUNT(*) as count FROM wiki_sections
      ${whereClause} ${whereClause ? 'AND' : 'WHERE'} (content = '' OR content IS NULL)`,
     params,
   );
 
-  const { rows: orphanRows } = await pool.query(
+  const { rows: orphanRows } = await getPool().query(
     `SELECT COUNT(*) as count FROM wiki_sections s
      ${whereClause} ${whereClause ? 'AND' : 'WHERE'} (
        s.parent IS NULL
@@ -415,7 +421,7 @@ export async function validateWiki(wikiId = null) {
     params,
   );
 
-  const { rows: unlinkedRows } = await pool.query(
+  const { rows: unlinkedRows } = await getPool().query(
     `SELECT COUNT(*) as count FROM wiki_sections s
      ${whereClause} ${whereClause ? 'AND' : 'WHERE'} NOT EXISTS (
        SELECT 1 FROM section_links sl WHERE sl.to_key = s.key AND sl.to_wiki_id = s.wiki_id
@@ -450,7 +456,7 @@ export async function createSection({
   skipLink = false,
 }) {
   // Check for existing section first to give a clear error
-  const { rows: existing } = await pool.query(
+  const { rows: existing } = await getPool().query(
     'SELECT key FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
     [wikiId, key],
   );
@@ -458,7 +464,7 @@ export async function createSection({
     return { exists: true };
   }
 
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     `
     INSERT INTO wiki_sections (wiki_id, key, parent, title, content, tags, status, metadata)
     VALUES ($1, $2, $3, $4, $5, $6::varchar(100)[], 'active', $7)
@@ -471,7 +477,7 @@ export async function createSection({
   if (rows.length > 0) {
     try {
       const embedding = await getEmbedding(`${title}\n${content.slice(0, 2000)}`);
-      await pool.query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
+      await getPool().query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
         JSON.stringify(embedding),
         rows[0].id,
       ]);
@@ -506,7 +512,7 @@ export async function updateSection({
   relatedKeys,
 }) {
   // Check existence first
-  const { rows: existing } = await pool.query(
+  const { rows: existing } = await getPool().query(
     'SELECT key, title, content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
     [wikiId, key],
   );
@@ -546,7 +552,7 @@ export async function updateSection({
   updates.push('updated_at = NOW()');
   params.push(wikiId, key);
 
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     `
     UPDATE wiki_sections SET ${updates.join(', ')}
     WHERE wiki_id = $${paramIdx} AND key = $${paramIdx + 1}
@@ -557,7 +563,7 @@ export async function updateSection({
 
   // Log history if content changed
   if (content !== undefined && rows.length > 0) {
-    await pool.query(
+    await getPool().query(
       `
       INSERT INTO section_history (wiki_id, section_key, content_after, change_reason)
       VALUES ($1, $2, $3, $4)
@@ -572,7 +578,7 @@ export async function updateSection({
       const newTitle = title !== undefined ? title : existing[0].title;
       const newContent = content !== undefined ? content : existing[0].content;
       const embedding = await getEmbedding(`${newTitle}\n${newContent.slice(0, 2000)}`);
-      await pool.query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
+      await getPool().query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
         JSON.stringify(embedding),
         rows[0].id,
       ]);
@@ -597,7 +603,7 @@ export async function updateSection({
  * Delete a section.
  */
 export async function deleteSection(wikiId, key) {
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     `
     DELETE FROM wiki_sections WHERE wiki_id = $1 AND key = $2
     RETURNING key, wiki_id, title
@@ -606,7 +612,7 @@ export async function deleteSection(wikiId, key) {
   );
 
   // Also delete backlinks
-  await pool.query(
+  await getPool().query(
     'DELETE FROM section_links WHERE (from_wiki_id = $1 AND from_key = $2) OR (to_wiki_id = $1 AND to_key = $2)',
     [wikiId, key],
   );
@@ -626,7 +632,7 @@ export async function getSectionHistory(wikiId, key, limit = 10) {
   }
   params.push(limit);
 
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     `SELECT content_before, content_after, changed_at, change_reason
      FROM section_history
      ${whereClause}
@@ -649,7 +655,7 @@ export async function findSimilar(query, wikiId = null, maxResults = 5) {
     params.push(wikiId);
   }
 
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     `
     SELECT key, wiki_id, title,
       LEVENSHTEIN(key, $${params.length + 1}) as distance
@@ -669,7 +675,7 @@ export async function findSimilar(query, wikiId = null, maxResults = 5) {
  * Returns the top N most similar sections (excluding self).
  */
 export async function findSimilarSections(key, wikiId = null, limit = 4) {
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     `
     WITH target_section AS (
       SELECT embedding, wiki_id 
@@ -714,7 +720,7 @@ export async function getAllSectionsWithEmbeddings(wikiId = null) {
     params.push(wikiId);
   }
 
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     `SELECT key, wiki_id, parent, title, content, embedding
      FROM wiki_sections
      ${whereClause}
@@ -736,7 +742,7 @@ export async function getAllSectionsWithEmbeddings(wikiId = null) {
  * Insert a link into section_links (ON CONFLICT DO NOTHING).
  */
 export async function insertSectionLink(fromWikiId, fromKey, toWikiId, toKey) {
-  const { rowCount } = await pool.query(
+  const { rowCount } = await getPool().query(
     `INSERT INTO section_links (from_wiki_id, from_key, to_wiki_id, to_key)
      VALUES ($1, $2, $3, $4)
      ON CONFLICT DO NOTHING`,
@@ -749,7 +755,7 @@ export async function insertSectionLink(fromWikiId, fromKey, toWikiId, toKey) {
  * Get all outgoing links for a section (what it links to).
  */
 export async function getOutgoingLinks(wikiId, key) {
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     `SELECT sl.to_key, ws.title as to_title
      FROM section_links sl
      JOIN wiki_sections ws ON ws.wiki_id = sl.to_wiki_id AND ws.key = sl.to_key
@@ -764,7 +770,7 @@ export async function getOutgoingLinks(wikiId, key) {
  * Clear all outgoing links for a section (used when re-linking with override).
  */
 export async function clearOutgoingLinks(wikiId, key) {
-  const { rowCount } = await pool.query(
+  const { rowCount } = await getPool().query(
     'DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2',
     [wikiId, key],
   );
@@ -775,7 +781,7 @@ export async function clearOutgoingLinks(wikiId, key) {
  * Update section embedding without changing content.
  */
 export async function updateSectionEmbedding(wikiId, key, embedding) {
-  const { rowCount } = await pool.query(
+  const { rowCount } = await getPool().query(
     'UPDATE wiki_sections SET embedding = $1 WHERE wiki_id = $2 AND key = $3',
     [JSON.stringify(embedding), wikiId, key],
   );
@@ -786,7 +792,7 @@ export async function updateSectionEmbedding(wikiId, key, embedding) {
  * Update section content and regenerate embedding.
  */
 export async function updateSectionContent(key, wikiId, content, _reason = 'auto-link') {
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     `UPDATE wiki_sections
      SET content = $1, updated_at = NOW()
      WHERE wiki_id = $2 AND key = $3
@@ -797,7 +803,7 @@ export async function updateSectionContent(key, wikiId, content, _reason = 'auto
   // Regenerate embedding
   if (rows.length > 0) {
     try {
-      const { rows: sectionRows } = await pool.query(
+      const { rows: sectionRows } = await getPool().query(
         'SELECT title, content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
         [wikiId, key],
       );
@@ -806,7 +812,7 @@ export async function updateSectionContent(key, wikiId, content, _reason = 'auto
         const embedding = await getEmbedding(
           `${sectionRows[0].title}\n${sectionRows[0].content.slice(0, 2000)}`,
         );
-        await pool.query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
+        await getPool().query('UPDATE wiki_sections SET embedding = $1 WHERE id = $2', [
           JSON.stringify(embedding),
           rows[0].id,
         ]);
@@ -824,7 +830,7 @@ export async function updateSectionContent(key, wikiId, content, _reason = 'auto
  * Capped at MAX_ACCESS_COUNT to prevent overflow.
  */
 export async function incrementAccessCount(wikiId, key) {
-  await pool.query(
+  await getPool().query(
     `UPDATE wiki_sections
      SET access_count = LEAST(access_count + 1, $1),
          last_accessed = NOW()
@@ -840,7 +846,7 @@ export async function incrementAccessCount(wikiId, key) {
  */
 export async function relinkSection(wikiId, key, { skipIfLinked = false } = {}) {
   if (skipIfLinked) {
-    const { rowCount } = await pool.query(
+    const { rowCount } = await getPool().query(
       'SELECT 1 FROM section_links WHERE from_wiki_id = $1 AND from_key = $2 LIMIT 1',
       [wikiId, key],
     );
@@ -848,7 +854,7 @@ export async function relinkSection(wikiId, key, { skipIfLinked = false } = {}) 
   }
 
   // Delete existing outgoing links
-  await pool.query(`DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`, [
+  await getPool().query(`DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2`, [
     wikiId,
     key,
   ]);
@@ -872,7 +878,7 @@ export async function insertExplicitLinks(wikiId, fromKey, relatedKeys) {
   await clearOutgoingLinks(wikiId, fromKey);
   if (relatedKeys.length === 0) return;
 
-  const { rows } = await pool.query(
+  const { rows } = await getPool().query(
     'SELECT key FROM wiki_sections WHERE wiki_id = $1 AND key = ANY($2)',
     [wikiId, relatedKeys],
   );
@@ -890,4 +896,4 @@ export async function insertExplicitLinks(wikiId, fromKey, relatedKeys) {
   }
 }
 
-export { pool };
+export { globalPool as pool };

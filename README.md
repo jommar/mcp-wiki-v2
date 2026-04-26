@@ -18,6 +18,7 @@ MCP server for wiki management backed by PostgreSQL. Supports semantic search, v
 ### Code Architecture
 
 - **`src/index.js`** — MCP server controller (tool registration, request routing)
+- **`src/transport.js`** — Transport layer (stdio for local, HTTP for remote hosting)
 - **`src/service.js`** — Business logic (validation, data transformation, orchestration)
 - **`src/db.js`** — Database queries and connection pooling
 - **`src/migrate.js`** — Forward-only migration runner (auto-runs on startup)
@@ -142,6 +143,57 @@ Register the same server twice under different names — one without `WIKI_ID` (
 
 This pattern scales to any number of pinned instances (`notes`, `docs`, etc.) by adding more entries pointing to the same container with different `WIKI_ID` values.
 
+### Remote Hosting (HTTP transport)
+
+Set `TRANSPORT=http` to expose the server over HTTP instead of stdio. In HTTP mode, every client authenticates with an API key generated from the admin TUI (`npm run admin`). Each key maps to its own isolated PostgreSQL database — clients cannot access each other's data.
+
+```bash
+# Start locally with HTTP transport
+TRANSPORT=http PORT=3000 DB_HOST=localhost DB_PORT=5433 node src/index.js
+```
+
+Or in Docker:
+
+```yaml
+# docker-compose override example
+services:
+  wiki-server-http:
+    build: .
+    container_name: wiki-v2-server-http
+    environment:
+      DB_HOST: wiki-db
+      TRANSPORT: http
+      PORT: 3000
+    ports:
+      - '3000:3000'
+    command: node src/index.js
+    depends_on:
+      wiki-db:
+        condition: service_healthy
+```
+
+#### Client MCP config (Claude Code)
+
+Clients add the server to their `~/.claude.json` using the API key issued by the admin:
+
+```json
+{
+  "mcpServers": {
+    "wiki": {
+      "transport": "http",
+      "url": "https://your-host.example.com",
+      "headers": {
+        "Authorization": "Bearer wk_v2_..."
+      }
+    }
+  }
+}
+```
+
+Replace `wk_v2_...` with the plain key shown once at creation time in the admin TUI. The key determines which database the client's wiki data is stored in — no `wikiId` parameter is needed, the server resolves it automatically from the key.
+
+The health check endpoint (`GET /health`) is always open with no auth required. All other endpoints require a valid bearer token.
+
 ## MCP Tools
 
 ### Discovery
@@ -213,7 +265,7 @@ This tool runs in the background and returns an immediate status message. A cron
 | `npm run format` / `format:check` | Run Prettier                                 |
 | `npm run check`                 | Run lint + format check                        |
 | `npm run fix`                   | Run lint:fix + format                          |
-| `npm run init`                  | Install pre-commit hook                        |
+| `npm run admin`                 | Open the admin TUI dashboard (blessed)        |
 | `npm test`                      | Run test suite                                 |
 
 ### Import Directory Structure
@@ -291,7 +343,9 @@ The migration runner creates a `migrations` table to track applied files. On fir
 | `DB_USER`      | `wiki`                  | Database user                             |
 | `DB_PASSWORD`  | `wiki`                  | Database password                         |
 | `DB_NAME`      | `wiki`                  | Database name                             |
-| `WIKI_ID`      | *(unset)*               | Default wiki ID. When set, `wikiId` is omitted from all tool schemas and resolved automatically — agents don't need to pass it. |
+| `TRANSPORT`    | `stdio`                 | Transport mode: `stdio` (local) or `http` (remote) |
+| `PORT`         | `3000`                  | HTTP port (only used when `TRANSPORT=http`) |
+| `WIKI_ID`      | *(unset)*               | Default wiki ID for stdio mode. When set, `wikiId` is omitted from all tool schemas and resolved automatically. In HTTP mode this is ignored — wiki ID comes from the API key. |
 | `LOG_LEVEL`    | `info`                  | Log level (debug, info, warn, error)      |
 | `LOG_DIR`      | `logs`                  | Log directory                             |
 

@@ -1,5 +1,8 @@
-// src/migrate.js - Forward-only migration runner
-// Runs on server startup. Applies new SQL files from sql/ directory.
+// src/migrate.js - Forward-only wiki schema migration runner
+// Reads from sql/wiki/ — wiki schema only, not admin migrations.
+// Two entry points:
+//   runMigrations()          — global pool (stdio startup)
+//   runWikiMigrations(pool)  — any pool (client DB first-connect)
 
 import fs from 'fs';
 import path from 'path';
@@ -8,72 +11,58 @@ import { pool } from './db.js';
 import { logger } from '../logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SQL_DIR = path.join(__dirname, '..', 'sql');
+const WIKI_SQL_DIR = path.join(__dirname, '..', 'sql', 'wiki');
 
-async function ensureMigrationsTable() {
-  await pool.query(`
+function getSqlFiles() {
+  if (!fs.existsSync(WIKI_SQL_DIR)) return [];
+  return fs.readdirSync(WIKI_SQL_DIR).filter((f) => f.endsWith('.sql')).sort();
+}
+
+async function applyMigrations(p) {
+  await p.query(`
     CREATE TABLE IF NOT EXISTS migrations (
-      filename VARCHAR(255) PRIMARY KEY,
+      filename   VARCHAR(255) PRIMARY KEY,
       applied_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
-}
 
-async function getAppliedFiles() {
-  const { rows } = await pool.query('SELECT filename FROM migrations ORDER BY filename');
-  return new Set(rows.map((r) => r.filename));
-}
+  const { rows } = await p.query('SELECT filename FROM migrations ORDER BY filename');
+  const applied = new Set(rows.map((r) => r.filename));
+  const files = getSqlFiles();
 
-function getSqlFiles() {
-  if (!fs.existsSync(SQL_DIR)) return [];
-  return fs
-    .readdirSync(SQL_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort(); // Lexicographic sort ensures 001 before 002
-}
-
-export async function runMigrations() {
-  await ensureMigrationsTable();
-
-  const applied = await getAppliedFiles();
-  const files = await getSqlFiles();
-
-  // On first run, mark all existing files as already applied.
-  // They were applied via docker-entrypoint-initdb.d or manually.
-  if (applied.size === 0 && files.length > 0) {
-    for (const f of files) {
-      await pool.query('INSERT INTO migrations (filename) VALUES ($1)', [f]);
-      applied.add(f);
-    }
-    logger.info('Migrations: marked existing SQL files as already applied', {
-      count: files.length,
-    });
-  }
-
-  // Find and apply new files
+  // On a brand-new DB, mark nothing as applied — run everything.
+  // (No "mark existing as applied" shortcut — client DBs start empty.)
   const pending = files.filter((f) => !applied.has(f));
   if (pending.length === 0) {
-    logger.info('Migrations: no pending migrations');
+    logger.info('Migrations: up to date');
     return;
   }
 
   for (const file of pending) {
-    const filePath = path.join(SQL_DIR, file);
-    const sql = fs.readFileSync(filePath, 'utf-8');
-
+    const sql = fs.readFileSync(path.join(WIKI_SQL_DIR, file), 'utf-8');
     logger.info('Migrations: applying', { file });
-    await pool.query('BEGIN');
+    await p.query('BEGIN');
     try {
-      await pool.query(sql);
-      await pool.query('INSERT INTO migrations (filename) VALUES ($1)', [file]);
-      await pool.query('COMMIT');
+      await p.query(sql);
+      await p.query('INSERT INTO migrations (filename) VALUES ($1)', [file]);
+      await p.query('COMMIT');
       logger.info('Migrations: applied', { file });
     } catch (err) {
-      await pool.query('ROLLBACK');
+      await p.query('ROLLBACK');
       logger.error('Migrations: failed', { file, error: err.message });
-      throw err; // Fail fast — don't continue if a migration breaks
+      throw err;
     }
   }
 
   logger.info('Migrations: complete', { applied: pending.length });
+}
+
+/** Run wiki schema migrations on the global (stdio) pool. */
+export async function runMigrations() {
+  await applyMigrations(pool);
+}
+
+/** Run wiki schema migrations on a given client pool. */
+export async function runWikiMigrations(clientPool) {
+  await applyMigrations(clientPool);
 }

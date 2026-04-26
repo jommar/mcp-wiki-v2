@@ -2,11 +2,11 @@
 // Handles server setup, tool registration, and request routing
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { config } from 'dotenv';
 import { logger } from '../logger.js';
 import * as service from './service.js';
+import { requestContext } from './context.js';
 
 config();
 
@@ -24,6 +24,9 @@ function wikiIdField() {
 }
 
 function resolveWikiId(wikiId) {
+  // Priority: authenticated API key (HTTP) > WIKI_ID env (stdio) > tool param
+  const ctx = requestContext.getStore();
+  if (ctx?.wikiId) return ctx.wikiId;
   if (DEFAULT_WIKI_ID) return DEFAULT_WIKI_ID;
   return wikiId || null;
 }
@@ -895,6 +898,8 @@ server.registerTool(
 
 import * as db from './db.js';
 
+let httpServer = null;
+
 async function shutdown() {
   const uptimeSec = ((Date.now() - startedAt) / 1000).toFixed(1);
   const totalRequests = Object.values(requestCounts).reduce((a, b) => a + b, 0);
@@ -908,6 +913,13 @@ async function shutdown() {
     totalRequests,
     tools: activeTools || 'none',
   });
+
+  // Drain HTTP connections before closing
+  if (httpServer) {
+    httpServer.closeIdleConnections?.();
+    await new Promise((resolve) => httpServer.close(resolve));
+    logger.info('HTTP server closed');
+  }
 
   // Wait for all background tasks if running
   if (backgroundTasks.size > 0) {
@@ -945,6 +957,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 import { runMigrations } from './migrate.js';
+import { connect } from './transport.js';
 
 logger.info('Starting Wiki Explorer V2 MCP Server', {
   dbHost: process.env.DB_HOST || 'localhost',
@@ -954,6 +967,4 @@ logger.info('Starting Wiki Explorer V2 MCP Server', {
 });
 
 await runMigrations();
-
-const transport = new StdioServerTransport();
-await server.connect(transport);
+httpServer = await connect(server);
