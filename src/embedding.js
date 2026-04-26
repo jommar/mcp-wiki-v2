@@ -27,13 +27,17 @@ function getExtractor() {
   return loadingPromise;
 }
 
+const MAX_EMBEDDING_INPUT = 2000;
+
 /**
  * Generate a 384-dimensional embedding vector for the given text.
+ * Input is truncated to MAX_EMBEDDING_INPUT chars to bound inference cost.
  * @param {string} text - The text to embed (title + content)
  * @returns {Promise<number[]>} 384-dim embedding vector
  */
 export async function getEmbedding(text) {
+  const truncated = text.length > MAX_EMBEDDING_INPUT ? text.slice(0, MAX_EMBEDDING_INPUT) : text;
   const ext = await getExtractor();
-  const output = await ext(text, { pooling: 'mean', normalize: true });
+  const output = await ext(truncated, { pooling: 'mean', normalize: true });
   return Array.from(output.data);
 }

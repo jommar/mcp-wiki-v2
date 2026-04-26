@@ -8,7 +8,12 @@ import { logger } from '../logger.js';
 
 export async function ensureDatabase() {
   const mode = process.env.TRANSPORT || 'stdio';
-  if (mode === 'http') return; // HTTP mode manages DBs via client-pool.js
+  if (mode === 'http') {
+    logger.warn(
+      'HTTP mode: database auto-creation is skipped. Client DBs are created on-demand via client-pool.js. Verify that API keys exist in wiki_admin or all requests will fail with 401.',
+    );
+    return;
+  }
 
   const dbName = process.env.DB_NAME || 'wiki';
   const host = process.env.DB_HOST || 'localhost';
@@ -28,10 +33,7 @@ export async function ensureDatabase() {
   });
 
   try {
-    const { rows } = await pool.query(
-      'SELECT 1 FROM pg_database WHERE datname = $1',
-      [dbName],
-    );
+    const { rows } = await pool.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName]);
 
     if (rows.length > 0) {
       logger.info('Database exists', { database: dbName });

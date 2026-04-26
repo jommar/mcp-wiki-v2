@@ -9,12 +9,12 @@ This is a PostgreSQL-backed wiki system exposed via MCP tools. You can read, wri
 ### Discovery
 
 1. **`get_info`** — Check what wiki instances exist and their section counts
-2. **`browse`** — Explore sections by topic/parent
-3. **`list`** — Get all section keys (use sparingly, can be large; supports `limit` param; includes `tags` and `linkCount` per section)
+2. **`browse`** — Explore sections by topic/parent; supports `limit` and `offset` for pagination
+3. **`list`** — Get all section keys (use sparingly, can be large); supports `limit` and `offset` for pagination; includes `tags` and `linkCount` per section
 
 ### Reading
 
-4. **`search`** — Semantic search by meaning (falls back to keyword if embeddings unavailable); supports optional `parent` filter; results include a `snippet` (first 200 chars of content) — use this to triage relevance before fetching full sections
+4. **`search`** — Semantic search by meaning (falls back to keyword if embeddings unavailable); supports optional `parent` filter and `offset` pagination; results include a `snippet` (first 200 chars of content) — use this to triage relevance before fetching full sections
 5. **`get_section`** — Read a specific section by key; supports `includeBacklinks` for optional backlink retrieval; returns `backlinksHasMore` when paginated
 6. **`get_sections`** — Batch read multiple sections (max 20 at once)
 

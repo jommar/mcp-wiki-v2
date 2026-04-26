@@ -9,6 +9,7 @@ const SUCCESS_DIR = path.resolve('import/success');
 const FAIL_DIR = path.resolve('import/fail');
 
 const KEY_PATTERN = /^[a-z0-9-]+$/;
+const WIKI_ID_PATTERN = /^[a-z0-9-]+$/;
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown']);
 
 /**
@@ -16,7 +17,7 @@ const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown']);
  * Each section has its own YAML frontmatter block delimited by ---.
  * Returns array of { frontmatter, body } or null if no sections found.
  */
-function parseAllSections(content) {
+export function parseAllSections(content) {
   const sections = [];
   // Match frontmatter blocks: ---\nkey: ...\n...\n---
   const regex = /---\n([\s\S]*?)\n---/g;
@@ -74,18 +75,19 @@ function parseAllSections(content) {
 /**
  * Validate frontmatter fields. Returns error string or null.
  */
-function validateFrontmatter(fm) {
+export function validateFrontmatter(fm) {
   if (!fm.key) return 'Missing required field: key';
   if (!fm.parent) return 'Missing required field: parent';
   if (!fm.title) return 'Missing required field: title';
-  if (!KEY_PATTERN.test(fm.key)) return `Invalid key format: "${fm.key}". Must be lowercase alphanumeric with hyphens`;
+  if (!KEY_PATTERN.test(fm.key))
+    return `Invalid key format: "${fm.key}". Must be lowercase alphanumeric with hyphens`;
   return null;
 }
 
 /**
  * Move a file from one path to another, creating directories as needed.
  */
-function moveFile(from, to) {
+export function moveFile(from, to) {
   fs.mkdirSync(path.dirname(to), { recursive: true });
   fs.renameSync(from, to);
 }
@@ -97,23 +99,39 @@ function moveFile(from, to) {
  * @param {string} filePath - Path to the .md file
  * @returns {Promise<{ wikiId: string, sections: number, imported: boolean, error?: string }>}
  */
-async function importFile(filePath) {
+export async function importFile(filePath) {
   const fileName = path.basename(filePath);
-  const content = fs.readFileSync(filePath, 'utf8');
+  const content = await fs.promises.readFile(filePath, 'utf8');
 
-  // Derive wiki_id from filename (without extension)
-  const wikiId = path.parse(fileName).name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+  // Derive wiki_id from filename (without extension), then check frontmatter for override
+  const wikiId = path
+    .parse(fileName)
+    .name.toLowerCase()
+    .replace(/[^a-z0-9]/g, '-');
 
   const sections = parseAllSections(content);
   if (!sections) {
-    return { wikiId, sections: 0, imported: false, error: 'No valid frontmatter sections found' };
+    return { wikiId: wikiId, sections: 0, imported: false, error: 'No valid frontmatter sections found' };
   }
+
+  // wiki_id override: if the first section's frontmatter has a valid wiki_id field,
+  // it takes precedence over the filename-derived value
+  const frontmatterWikiId = sections[0].frontmatter.wiki_id;
+  const resolvedWikiId =
+    frontmatterWikiId && typeof frontmatterWikiId === 'string' && WIKI_ID_PATTERN.test(frontmatterWikiId)
+      ? frontmatterWikiId
+      : wikiId;
 
   // Validate all sections first before starting transaction
   for (const section of sections) {
     const validationError = validateFrontmatter(section.frontmatter);
     if (validationError) {
-      return { wikiId, sections: 0, imported: false, error: `${validationError} (key: ${section.frontmatter.key || 'unknown'})` };
+      return {
+        wikiId: resolvedWikiId,
+        sections: 0,
+        imported: false,
+        error: `${validationError} (key: ${section.frontmatter.key || 'unknown'})`,
+      };
     }
   }
 
@@ -144,12 +162,12 @@ async function importFile(filePath) {
           updated_at = NOW()
         RETURNING id
       `,
-        [wikiId, key, parent, title, body, tags, JSON.stringify({})],
+        [resolvedWikiId, key, parent, title, body, tags, JSON.stringify({})],
       );
 
       if (rows.length === 0) {
         await client.query('ROLLBACK');
-        return { wikiId, sections: 0, imported: false, error: `Upsert failed for key: ${key}` };
+        return { wikiId: resolvedWikiId, sections: 0, imported: false, error: `Upsert failed for key: ${key}` };
       }
 
       const sectionId = rows[0].id;
@@ -162,7 +180,7 @@ async function importFile(filePath) {
           sectionId,
         ]);
       } catch (err) {
-        logger.warn(`Failed to generate embedding for ${wikiId}/${key}`, { error: err.message });
+        logger.warn(`Failed to generate embedding for ${resolvedWikiId}/${key}`, { error: err.message });
         // Don't fail the import for embedding errors
       }
 
@@ -170,10 +188,10 @@ async function importFile(filePath) {
     }
 
     await client.query('COMMIT');
-    return { wikiId, sections: imported, imported: true };
+    return { wikiId: resolvedWikiId, sections: imported, imported: true };
   } catch (err) {
     await client.query('ROLLBACK');
-    return { wikiId, sections: 0, imported: false, error: err.message };
+    return { wikiId: resolvedWikiId, sections: 0, imported: false, error: err.message };
   } finally {
     client.release();
   }

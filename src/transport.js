@@ -11,9 +11,58 @@ const STARTED_AT = Date.now();
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
+import crypto from 'node:crypto';
+
 const DEFAULT_PORT = 3000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
+
+// When TRUST_PROXY=true, read the real client IP from X-Forwarded-For.
+// Only enable when running behind a known proxy; the header is trivially spoofable otherwise.
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1';
+
+export function resolveClientIp(req) {
+  if (TRUST_PROXY) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) return forwarded.split(',')[0].trim();
+  }
+  return req.socket?.remoteAddress || 'unknown';
+}
+
+// ─── Rate Limiting ───────────────────────────────────────────────────────────────
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute rolling window
+const RATE_LIMIT_MAX_ATTEMPTS = 10;
+const rateLimitMap = new Map(); // ip → { count, windowStart }
+
+function isRateLimited(ip) {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitMap.set(ip, { count: 0, windowStart: now });
+    return false;
+  }
+  return entry.count >= RATE_LIMIT_MAX_ATTEMPTS;
+}
+
+function recordAuthFailure(ip) {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitMap.set(ip, { count: 1, windowStart: now });
+  } else {
+    entry.count++;
+  }
+}
+
+// Periodic cleanup of stale rate limit entries (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap) {
+    if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+      rateLimitMap.delete(ip);
+    }
+  }
+}, 300_000).unref();
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -52,19 +101,10 @@ function setCors(res) {
 }
 
 // ─── HTTP Transport ─────────────────────────────────────────────────────────────
-// TODO(https): This server speaks plain HTTP. For production with real clients,
-// run behind a TLS-terminating reverse proxy (nginx, Caddy) or switch the
-// http.createServer call to https.createServer with a cert/key pair.
-// Bearer tokens are exposed in plaintext without TLS.
-//
-// TODO(rate-limiting): No brute-force protection on auth failures. Before
-// going public, add a per-IP failed-auth counter (e.g. in a Map with a
-// rolling window) and return 429 after N failures within the window.
 
 async function startHttp(server) {
-  const {
-    StreamableHTTPServerTransport,
-  } = await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
+  const { StreamableHTTPServerTransport } =
+    await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
   const http = await import('node:http');
 
   const transport = new StreamableHTTPServerTransport({
@@ -77,6 +117,8 @@ async function startHttp(server) {
 
   const httpServer = http.createServer((req, res) => {
     const start = Date.now();
+    const requestId = req.headers['x-request-id'] || crypto.randomUUID();
+    const clientIp = resolveClientIp(req);
 
     // Per-request timeout
     req.setTimeout(REQUEST_TIMEOUT_MS, () => {
@@ -85,18 +127,18 @@ async function startHttp(server) {
 
     // CORS headers on every response
     setCors(res);
+    res.setHeader('X-Request-Id', requestId);
 
     // Log non-200 responses on finish
     res.on('finish', () => {
-      if (res.statusCode >= 400) {
-        logger.warn('http request', {
-          method: req.method,
-          url: req.url,
-          status: res.statusCode,
-          duration: `${Date.now() - start}ms`,
-          ip: req.socket?.remoteAddress,
-        });
-      }
+      logger.info('http request', {
+        requestId,
+        method: req.method,
+        url: req.url,
+        status: res.statusCode,
+        duration: `${Date.now() - start}ms`,
+        ip: clientIp,
+      });
     });
 
     // CORS preflight
@@ -116,6 +158,16 @@ async function startHttp(server) {
       return;
     }
 
+    // Rate limiting: check before auth
+    if (isRateLimited(clientIp)) {
+      logger.warn('Rate limit exceeded', { requestId, ip: clientIp });
+      json(res, 429, {
+        error: 'Too Many Requests',
+        message: 'Too many failed auth attempts. Try again later.',
+      });
+      return;
+    }
+
     // Auth: verify bearer token against admin DB, get client wiki_id from key name
     const rawAuth = req.headers['authorization'];
     const token = rawAuth?.startsWith('Bearer ') ? rawAuth.slice(7) : null;
@@ -123,6 +175,7 @@ async function startHttp(server) {
     authenticateToken(token)
       .then(async (auth) => {
         if (!auth) {
+          recordAuthFailure(clientIp);
           json(res, 401, { error: 'Unauthorized', message: 'Invalid or missing API key' });
           return;
         }
@@ -181,6 +234,10 @@ async function startHttp(server) {
     });
   });
 
+  logger.warn(
+    'HTTP mode: TLS is not configured. Bearer tokens (wk_v2_*) are transmitted in plaintext. Run behind a TLS-terminating reverse proxy (nginx, Caddy) for production.',
+  );
+
   logger.info('MCP server listening', { transport: 'http', port: PORT, auth: 'api-key' });
 
   return httpServer;
@@ -189,9 +246,7 @@ async function startHttp(server) {
 // ─── Stdio Transport ────────────────────────────────────────────────────────────
 
 async function startStdio(server) {
-  const { StdioServerTransport } = await import(
-    '@modelcontextprotocol/sdk/server/stdio.js'
-  );
+  const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info('MCP server connected', { transport: 'stdio' });
@@ -202,7 +257,7 @@ async function startStdio(server) {
 
 /** Connect the MCP server using the transport specified by TRANSPORT env var.
  *  Returns the HTTP server instance (for graceful shutdown) or null for stdio. */
-export async function connect(server) {
+export function connect(server) {
   const mode = process.env.TRANSPORT || 'stdio';
 
   if (mode === 'http') {

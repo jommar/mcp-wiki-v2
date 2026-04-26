@@ -31,7 +31,9 @@ CREATE INDEX wiki_sections_title_trgm ON wiki_sections USING GIN(title gin_trgm_
 
 -- Vector embeddings (384-dim for miniLM)
 ALTER TABLE wiki_sections ADD COLUMN embedding vector(384);
-CREATE INDEX wiki_sections_embedding_idx ON wiki_sections USING hnsw(embedding vector_cosine_ops);
+-- NOTE: m=16 and ef_construction=200 are sensible defaults for HNSW.
+--       For production scale, benchmark and tune these values.
+CREATE INDEX wiki_sections_embedding_idx ON wiki_sections USING hnsw(embedding vector_cosine_ops) WITH (m = 16, ef_construction = 200);
 
 -- Trigger: populate search_vector on insert/update
 CREATE OR REPLACE FUNCTION populate_search_vector() RETURNS TRIGGER AS $$
@@ -63,6 +65,11 @@ CREATE INDEX section_links_to_idx ON section_links(to_wiki_id, to_key);
 CREATE INDEX section_links_from_idx ON section_links(from_wiki_id, from_key);
 
 -- Version history
+-- NOTE: FK with ON DELETE CASCADE was added in migration 004.
+--       history rows are deleted when the parent section is deleted.
+-- NOTE: content_before is now stored by the app layer in db.js (updateSection stores
+--       OLD.content before updating). The trigger below also stores it during direct
+--       UPDATEs. Both paths now capture content_before.
 CREATE TABLE section_history (
     id SERIAL PRIMARY KEY,
     wiki_id VARCHAR(50) NOT NULL,
@@ -91,7 +98,11 @@ CREATE TRIGGER wiki_sections_history_trigger
     FOR EACH ROW
     EXECUTE FUNCTION log_section_history();
 
--- Trigger: auto-populate backlinks from [[wiki-key]] patterns in content
+-- NOTE: The extract_backlinks() trigger was DISABLED in migration 004.
+--       The app layer (insertExplicitLinks, relinkSection) is now the sole
+--       manager of section_links. The [[key]] syntax in content is for human
+--       readability only — not a linking mechanism. The function definition
+--       is kept for reference/documentation but is not attached to any trigger.
 CREATE OR REPLACE FUNCTION extract_backlinks() RETURNS TRIGGER AS $$
 DECLARE
     link_match RECORD;
@@ -126,7 +137,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER wiki_sections_backlinks_trigger
-    AFTER INSERT OR UPDATE ON wiki_sections
-    FOR EACH ROW
-    EXECUTE FUNCTION extract_backlinks();
+-- DISABLED in migration 004 — app layer manages all links.
+-- CREATE TRIGGER wiki_sections_backlinks_trigger
+--     AFTER INSERT OR UPDATE ON wiki_sections
+--     FOR EACH ROW
+--     EXECUTE FUNCTION extract_backlinks();

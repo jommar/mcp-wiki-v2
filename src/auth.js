@@ -17,7 +17,8 @@ async function getVerifyKey() {
 }
 
 const ADMIN_DB = 'wiki_admin';
-const CACHE_TTL = 5 * 60 * 1000; // 5 min — re-verify after revoke can propagate
+const CACHE_TTL = parseInt(process.env.AUTH_CACHE_TTL_MS, 10) || 5 * 60 * 1000; // 5 min default
+const FAILED_CACHE_TTL = parseInt(process.env.AUTH_FAILED_CACHE_TTL_MS, 10) || 60_000; // 1 min
 
 const pool = new pg.Pool({
   host:     process.env.DB_HOST     || 'localhost',
@@ -32,7 +33,13 @@ const pool = new pg.Pool({
 
 // Cache: sha256(token) → { name, readonly, cachedAt }
 // Keyed by a fast fingerprint so we don't expose the raw token in memory.
+// TTL is configurable via AUTH_CACHE_TTL_MS env var (default 5 min).
+// Use flushAuthCache() to manually clear on key revocation.
 const cache = new Map();
+
+// Failed-attempt cache: sha256(token) → cachedAt
+// Prevents repeated O(N) bcrypt loops for invalid tokens (brute-force mitigation).
+const failedCache = new Map();
 
 async function getActiveKeys() {
   const { rows } = await pool.query(
@@ -59,6 +66,12 @@ export async function authenticateToken(token) {
   const verifyKey = await getVerifyKey();
   if (!verifyKey) return null; // auth unavailable without the SaaS admin module
 
+  // Check failed-attempt cache to avoid O(N) bcrypt on repeated invalid tokens
+  const failedHit = failedCache.get(fingerprint);
+  if (failedHit && Date.now() - failedHit < FAILED_CACHE_TTL) {
+    return null;
+  }
+
   // Verify against every active key (typically <100; bcrypt comparison each)
   const keys = await getActiveKeys();
   for (const k of keys) {
@@ -68,7 +81,15 @@ export async function authenticateToken(token) {
     }
   }
 
+  // Cache the failed attempt so we skip the bcrypt loop next time
+  failedCache.set(fingerprint, Date.now());
   return null;
+}
+
+/** Clear all auth caches. Useful after key revocation — call this externally. */
+export function flushAuthCache() {
+  cache.clear();
+  failedCache.clear();
 }
 
 /** Fire-and-forget: update last_used_at on successful auth. */

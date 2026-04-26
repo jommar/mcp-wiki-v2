@@ -6,7 +6,7 @@ import { requestContext } from './context.js';
 
 // Constants for auto-linking and access tracking
 const MAX_ACCESS_COUNT = 9999;
-const MAX_LINKS_PER_SECTION = 4;
+const MAX_LINKS_PER_SECTION = parseInt(process.env.MAX_LINKS_PER_SECTION, 10) || 4;
 
 // Global pool — used for stdio mode and server startup migrations
 const globalPool = new Pool({
@@ -23,21 +23,27 @@ globalPool.query('CREATE EXTENSION IF NOT EXISTS fuzzystrmatch').catch(() => {})
 // Per-request pool: from authenticated client context (HTTP) or global (stdio)
 function getPool() {
   const ctx = requestContext.getStore();
+  if (!ctx && process.env.TRANSPORT === 'http') {
+    throw new Error(
+      'No request context found in HTTP mode — possible unauthenticated code path. ' +
+        'All HTTP requests must be authenticated and routed through requestContext.run().',
+    );
+  }
   return ctx?.pool ?? globalPool;
 }
 
 /**
- * List all sections with optional wiki_id filter.
+ * List all sections with optional wiki_id filter and offset pagination.
  */
-export async function listSections(wikiId = null, limit = 100) {
+export async function listSections(wikiId = null, limit = 100, offset = 0) {
   const query = wikiId
     ? `SELECT key, wiki_id, parent, title, tags, metadata, LENGTH(content) as content_length,
               (SELECT COUNT(*) FROM section_links sl WHERE sl.from_wiki_id = ws.wiki_id AND sl.from_key = ws.key) as link_count
-       FROM wiki_sections ws WHERE wiki_id = $1 ORDER BY key LIMIT $2`
+       FROM wiki_sections ws WHERE wiki_id = $1 ORDER BY key LIMIT $2 OFFSET $3`
     : `SELECT key, wiki_id, parent, title, tags, metadata, LENGTH(content) as content_length,
               (SELECT COUNT(*) FROM section_links sl WHERE sl.from_wiki_id = ws.wiki_id AND sl.from_key = ws.key) as link_count
-       FROM wiki_sections ws ORDER BY wiki_id, key LIMIT $1`;
-  const { rows } = await getPool().query(query, wikiId ? [wikiId, limit] : [limit]);
+       FROM wiki_sections ws ORDER BY wiki_id, key LIMIT $1 OFFSET $2`;
+  const { rows } = await getPool().query(query, wikiId ? [wikiId, limit, offset] : [limit, offset]);
   return rows.map((r) => ({
     key: r.key,
     wikiId: r.wiki_id,
@@ -53,7 +59,7 @@ export async function listSections(wikiId = null, limit = 100) {
 /**
  * Browse sections by parent topic.
  */
-export async function browseSections(topic, wikiId = null, limit = 100) {
+export async function browseSections(topic, wikiId = null, limit = 100, offset = 0) {
   let query = `
     SELECT key, wiki_id, parent, title, metadata->>'depth' as depth, metadata->'breadcrumbs' as breadcrumbs
     FROM wiki_sections
@@ -76,8 +82,8 @@ export async function browseSections(topic, wikiId = null, limit = 100) {
   if (conditions.length) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
-  query += ' ORDER BY parent, key LIMIT $' + (params.length + 1);
-  params.push(limit);
+  query += ' ORDER BY parent, key LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+  params.push(limit, offset);
 
   const { rows } = await getPool().query(query, params);
   return rows.map((r) => ({
@@ -93,7 +99,7 @@ export async function browseSections(topic, wikiId = null, limit = 100) {
 /**
  * Semantic search using vector embeddings (cosine distance).
  */
-async function searchSemantic(query, { wikiId, parent, limit }) {
+async function searchSemantic(query, { wikiId, parent, limit, offset = 0 }) {
   try {
     const embedding = await getEmbedding(query);
     const params = [JSON.stringify(embedding)];
@@ -116,9 +122,9 @@ async function searchSemantic(query, { wikiId, parent, limit }) {
       FROM wiki_sections
       ${whereClause}
       ORDER BY embedding <=> $1
-      LIMIT $${params.length + 1}
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
-    params.push(limit);
+    params.push(limit, offset);
 
     const { rows } = await getPool().query(searchQuery, params);
     return rows.map((r) => ({
@@ -141,17 +147,21 @@ async function searchSemantic(query, { wikiId, parent, limit }) {
  * Search sections using full-text search (tsvector).
  * Tries semantic search first; falls back to keyword if no embeddings exist.
  */
-export async function searchSections(query, { wikiId = null, parent = null, fuzzy = false, limit = 20 } = {}) {
+export async function searchSections(
+  query,
+  { wikiId = null, parent = null, fuzzy = false, limit = 20, offset = 0 } = {},
+) {
   if (fuzzy) {
     // Fall back to trigram similarity for fuzzy matching
-    return searchFuzzy(query, { wikiId, parent, limit });
+    return searchFuzzy(query, { wikiId, parent, limit, offset });
   }
 
   // Try semantic search first
-  const semanticResults = await searchSemantic(query, { wikiId, parent, limit });
+  const semanticResults = await searchSemantic(query, { wikiId, parent, limit, offset });
 
   // If we got results with meaningful similarity, use them
-  if (semanticResults.length > 0 && semanticResults.some((r) => r.rank > 0.1)) {
+  const similarityThreshold = parseFloat(process.env.SIMILARITY_THRESHOLD || '0.1');
+  if (semanticResults.length > 0 && semanticResults.some((r) => r.rank > similarityThreshold)) {
     return semanticResults;
   }
 
@@ -185,9 +195,9 @@ export async function searchSections(query, { wikiId = null, parent = null, fuzz
     FROM wiki_sections
     ${whereClause} ${whereClause ? 'AND' : 'WHERE'} search_vector @@ to_tsquery('english', $${params.length + 1})
     ORDER BY rank DESC
-    LIMIT $${params.length + 2}
+    LIMIT $${params.length + 2} OFFSET $${params.length + 3}
   `;
-  params.push(searchTerms, limit);
+  params.push(searchTerms, limit, offset);
 
   const { rows } = await getPool().query(searchQuery, params);
   return rows.map((r) => ({
@@ -205,7 +215,7 @@ export async function searchSections(query, { wikiId = null, parent = null, fuzz
 /**
  * Fuzzy search using trigram similarity.
  */
-async function searchFuzzy(query, { wikiId, parent, limit }) {
+async function searchFuzzy(query, { wikiId, parent, limit, offset = 0 }) {
   const params = [];
   const conditions = [];
 
@@ -234,9 +244,9 @@ async function searchFuzzy(query, { wikiId, parent, limit }) {
       OR content ILIKE $${params.length + 1}
     )
     ORDER BY score DESC
-    LIMIT $${params.length + 2}
+    LIMIT $${params.length + 2} OFFSET $${params.length + 3}
   `;
-  params.push(query, limit);
+  params.push(query, limit, offset);
 
   const { rows } = await getPool().query(searchQuery, params);
   return rows.map((r) => ({
@@ -414,9 +424,16 @@ export async function validateWiki(wikiId = null) {
   const { rows: orphanRows } = await getPool().query(
     `SELECT COUNT(*) as count FROM wiki_sections s
      ${whereClause} ${whereClause ? 'AND' : 'WHERE'} (
-       s.parent IS NULL
-       AND NOT EXISTS (SELECT 1 FROM wiki_sections c WHERE c.parent = s.title AND c.wiki_id = s.wiki_id)
-       AND NOT EXISTS (SELECT 1 FROM section_links sl WHERE sl.to_key = s.key AND sl.to_wiki_id = s.wiki_id)
+       (
+         s.parent IS NULL
+         AND NOT EXISTS (SELECT 1 FROM wiki_sections c WHERE c.parent = s.title AND c.wiki_id = s.wiki_id)
+         AND NOT EXISTS (SELECT 1 FROM section_links sl WHERE sl.to_key = s.key AND sl.to_wiki_id = s.wiki_id)
+       )
+       OR (
+         s.parent IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM wiki_sections p WHERE p.title = s.parent AND p.wiki_id = s.wiki_id)
+         AND NOT EXISTS (SELECT 1 FROM section_links sl WHERE sl.to_key = s.key AND sl.to_wiki_id = s.wiki_id)
+       )
      )`,
     params,
   );
@@ -485,7 +502,9 @@ export async function createSection({
       logger.warn('Failed to generate embedding on create', { key, error: err.message });
     }
 
-    // Use explicit relatedKeys if provided, otherwise auto-link via embeddings
+    // Links are managed by the app layer (insertExplicitLinks / relinkSection).
+    // The extract_backlinks() DB trigger was removed in migration 004 — the
+    // [[key]] syntax in content is for human readability only, not linking.
     if (!skipLink) {
       if (relatedKeys.length > 0) {
         await insertExplicitLinks(wikiId, key, relatedKeys);
@@ -561,14 +580,15 @@ export async function updateSection({
     params,
   );
 
-  // Log history if content changed
+  // Log history if content changed — stores both old and new content
   if (content !== undefined && rows.length > 0) {
+    const oldContent = existing[0].content || '';
     await getPool().query(
       `
-      INSERT INTO section_history (wiki_id, section_key, content_after, change_reason)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO section_history (wiki_id, section_key, content_before, content_after, change_reason)
+      VALUES ($1, $2, $3, $4, $5)
     `,
-      [wikiId, key, content, reason || 'update'],
+      [wikiId, key, oldContent, content, reason || 'update'],
     );
   }
 
@@ -588,6 +608,7 @@ export async function updateSection({
   }
 
   // Update links: use explicit relatedKeys if provided, relink if embedding changed
+  // App layer is the sole manager of section_links (trigger removed in migration 004).
   if (rows.length > 0) {
     if (relatedKeys !== undefined) {
       await insertExplicitLinks(wikiId, key, relatedKeys);
@@ -673,8 +694,27 @@ export async function findSimilar(query, wikiId = null, maxResults = 5) {
 /**
  * Find similar sections for a given section using vector embeddings.
  * Returns the top N most similar sections (excluding self).
+ * Falls back to keyword (Levenshtein) similarity if the target section
+ * has no embedding, with a clear log warning.
  */
 export async function findSimilarSections(key, wikiId = null, limit = 4) {
+  // First check if the target section has an embedding
+  const { rows: targetCheck } = await getPool().query(
+    `SELECT embedding FROM wiki_sections WHERE key = $1 ${wikiId ? 'AND wiki_id = $2' : ''} LIMIT 1`,
+    wikiId ? [key, wikiId] : [key],
+  );
+
+  if (targetCheck.length === 0 || !targetCheck[0].embedding) {
+    logger.warn(
+      'findSimilarSections: target section has no embedding, falling back to keyword similarity',
+      {
+        key,
+        wikiId,
+      },
+    );
+    return findSimilar(key, wikiId, limit);
+  }
+
   const { rows } = await getPool().query(
     `
     WITH target_section AS (
@@ -843,6 +883,7 @@ export async function incrementAccessCount(wikiId, key) {
  * Re-link a section based on embedding similarity.
  * Deletes existing outgoing links and inserts new ones.
  * If skipIfLinked is true, does nothing when the section already has outgoing links.
+ * App layer is the sole manager of section_links (trigger removed in migration 004).
  */
 export async function relinkSection(wikiId, key, { skipIfLinked = false } = {}) {
   if (skipIfLinked) {
@@ -873,6 +914,7 @@ export async function relinkSection(wikiId, key, { skipIfLinked = false } = {}) 
  * Insert explicit section links from relatedKeys.
  * Validates targets exist to avoid FK violations, logs unknown keys as warnings.
  * Clears existing outgoing links first (replaces, not appends).
+ * Uses a single bulk INSERT via UNNEST instead of N individual INSERTs.
  */
 export async function insertExplicitLinks(wikiId, fromKey, relatedKeys) {
   await clearOutgoingLinks(wikiId, fromKey);
@@ -886,13 +928,21 @@ export async function insertExplicitLinks(wikiId, fromKey, relatedKeys) {
 
   const invalid = relatedKeys.filter((k) => !validKeys.has(k));
   if (invalid.length > 0) {
-    logger.warn('insertExplicitLinks: relatedKeys not found, skipping', { wikiId, fromKey, invalid });
+    logger.warn('insertExplicitLinks: relatedKeys not found, skipping', {
+      wikiId,
+      fromKey,
+      invalid,
+    });
   }
 
-  for (const targetKey of relatedKeys) {
-    if (validKeys.has(targetKey)) {
-      await insertSectionLink(wikiId, fromKey, wikiId, targetKey);
-    }
+  const valid = relatedKeys.filter((k) => validKeys.has(k));
+  if (valid.length > 0) {
+    await getPool().query(
+      `INSERT INTO section_links (from_wiki_id, from_key, to_wiki_id, to_key)
+       SELECT $1, $2, $3, UNNEST($4::text[])
+       ON CONFLICT DO NOTHING`,
+      [wikiId, fromKey, wikiId, valid],
+    );
   }
 }
 

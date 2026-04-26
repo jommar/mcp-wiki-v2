@@ -194,6 +194,10 @@ Replace `wk_v2_...` with the plain key shown once at creation time in the admin 
 
 The health check endpoint (`GET /health`) is always open with no auth required. All other endpoints require a valid bearer token.
 
+#### Rate limiting
+
+HTTP mode applies per-IP rate limiting: 10 failed auth attempts per minute before returning `429 Too Many Requests`. When running behind a reverse proxy, set `TRUST_PROXY=true` so the real client IP is read from `X-Forwarded-For` instead of the proxy's socket address.
+
 ## MCP Tools
 
 ### Discovery
@@ -201,14 +205,14 @@ The health check endpoint (`GET /health`) is always open with no auth required. 
 | Tool        | Description                                                    |
 | ----------- | -------------------------------------------------------------- |
 | `get_info`  | Get instance metadata and section counts                       |
-| `browse`    | Browse sections grouped by parent topic                        |
-| `list`      | List all sections, optionally filtered by `wikiId` and `limit`; includes tags and linkCount |
+| `browse`    | Browse sections grouped by parent topic; supports `limit` and `offset` for pagination |
+| `list`      | List all sections, optionally filtered by `wikiId`; supports `limit` and `offset`; includes tags and linkCount |
 
 ### Reading
 
 | Tool            | Description                                                                  |
 | --------------- | ---------------------------------------------------------------------------- |
-| `search`        | Semantic search by meaning (falls back to keyword if embeddings unavailable); supports `parent` filter; results include content snippets |
+| `search`        | Semantic search by meaning (falls back to keyword if embeddings unavailable); supports `parent` filter and `offset` pagination; results include content snippets |
 | `get_section`   | Get a single section with content pagination; `includeBacklinks` optional; returns `backlinksHasMore` when backlinks are paginated |
 | `get_sections`  | Batch retrieve multiple sections (max 20 at once)                            |
 
@@ -266,7 +270,9 @@ This tool runs in the background and returns an immediate status message. A cron
 | `npm run check`                 | Run lint + format check                        |
 | `npm run fix`                   | Run lint:fix + format                          |
 | `npm run admin`                 | Open the admin TUI dashboard (blessed)        |
-| `npm test`                      | Run test suite                                 |
+| `npm test`                      | Run full test suite (unit + integration)       |
+| `npm run test:unit`             | Run unit tests only                            |
+| `npm run test:integration`      | Run integration tests only (requires DB)       |
 
 ### Import Directory Structure
 
@@ -277,7 +283,7 @@ import/
 └── fail/       ← Failed imports are moved here with error info
 ```
 
-Files in `staging/` must have YAML frontmatter with `key`, `parent`, and `title`.
+Files in `staging/` must have YAML frontmatter with `key`, `parent`, and `title`. The `wiki_id` field in the first section's frontmatter overrides the filename-derived wiki ID — useful when the filename doesn't match the intended wiki instance.
 
 ### Embeddings
 
@@ -331,23 +337,31 @@ Migrations live in `sql/` and are auto-applied on server startup by `src/migrate
 - **`001_initial_schema.sql`** — Core tables, triggers, extensions
 - **`002_access_tracking.sql`** — Adds `access_count` and `last_accessed` columns
 - **`003_foreign_key_cascade.sql`** — Adds cascade deletes for relationships
+- **`004_trigger_fk.sql`** — Disables `extract_backlinks()` DB trigger (app layer manages all links); adds `section_history` FK with `ON DELETE CASCADE`
 
 The migration runner creates a `migrations` table to track applied files. On first run, it marks existing SQL files as already applied (compatible with `docker-entrypoint-initdb.d`).
 
 ## Environment Variables
 
-| Variable       | Default                 | Description                               |
-| -------------- | ----------------------- | ----------------------------------------- |
-| `DB_HOST`      | `localhost`             | PostgreSQL host                           |
-| `DB_PORT`      | `5433`                  | PostgreSQL port                           |
-| `DB_USER`      | `wiki`                  | Database user                             |
-| `DB_PASSWORD`  | `wiki`                  | Database password                         |
-| `DB_NAME`      | `wiki`                  | Database name                             |
-| `TRANSPORT`    | `stdio`                 | Transport mode: `stdio` (local) or `http` (remote) |
-| `PORT`         | `3000`                  | HTTP port (only used when `TRANSPORT=http`) |
-| `WIKI_ID`      | *(unset)*               | Default wiki ID for stdio mode. When set, `wikiId` is omitted from all tool schemas and resolved automatically. In HTTP mode this is ignored — wiki ID comes from the API key. |
-| `LOG_LEVEL`    | `info`                  | Log level (debug, info, warn, error)      |
-| `LOG_DIR`      | `logs`                  | Log directory                             |
+| Variable                  | Default     | Description                               |
+| ------------------------- | ----------- | ----------------------------------------- |
+| `DB_HOST`                 | `localhost` | PostgreSQL host                           |
+| `DB_PORT`                 | `5433`      | PostgreSQL port                           |
+| `DB_USER`                 | `wiki`      | Database user                             |
+| `DB_PASSWORD`             | `wiki`      | Database password                         |
+| `DB_NAME`                 | `wiki`      | Database name                             |
+| `TRANSPORT`               | `stdio`     | Transport mode: `stdio` (local) or `http` (remote) |
+| `PORT`                    | `3000`      | HTTP port (only used when `TRANSPORT=http`) |
+| `WIKI_ID`                 | *(unset)*   | Default wiki ID for stdio mode. When set, `wikiId` is omitted from all tool schemas and resolved automatically. In HTTP mode this is ignored — wiki ID comes from the API key. |
+| `TRUST_PROXY`             | *(unset)*   | Set to `true` to read the real client IP from `X-Forwarded-For` (enable when behind a reverse proxy for correct rate limiting) |
+| `AUTH_CACHE_TTL_MS`       | `300000`    | How long (ms) a successful auth is cached before re-verification (default 5 min) |
+| `AUTH_FAILED_CACHE_TTL_MS`| `60000`     | How long (ms) a failed token attempt is cached to skip bcrypt re-evaluation (default 1 min) |
+| `MAX_LINKS_PER_SECTION`   | `4`         | Max outgoing links per section for auto-linking |
+| `SIMILARITY_THRESHOLD`    | `0.1`       | Minimum cosine similarity score to use semantic search results (falls back to keyword below this) |
+| `RELINK_DEBOUNCE_MS`      | `300000`    | Minimum interval (ms) between auto-relink triggers for the same section on read (default 5 min) |
+| `AUTO_LINK_CONCURRENCY`   | `10`        | Max parallel DB connections used during `auto_link_sections` |
+| `LOG_LEVEL`               | `info`      | Log level (debug, info, warn, error)      |
+| `LOG_DIR`                 | `logs`      | Log directory                             |
 
 ## Migration from V1
 

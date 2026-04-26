@@ -14,6 +14,9 @@ export const BATCH_SIZE = 5;
 export const MAX_CONTENT_LENGTH = 8000;
 export const MAX_CONTENT_SIZE = 50000; // 50KB hard limit for writes
 export const KEY_PATTERN = /^[a-z0-9-]+$/;
+export const MAX_TITLE_LENGTH = 500;
+export const MAX_PARENT_LENGTH = 255;
+export const MAX_REASON_LENGTH = 100;
 
 // Key validation
 export function validateKey(key) {
@@ -22,6 +25,19 @@ export function validateKey(key) {
     return `Invalid key format: "${key}". Keys must be lowercase alphanumeric with hyphens`;
   }
   if (key.length > 255) return `Key too long (${key.length} chars, max 255)`;
+  return null;
+}
+
+/** Validate a string field against a max-length constraint, returning an error message or null. */
+export function validateField(name, value, maxLength) {
+  if (
+    value !== undefined &&
+    value !== null &&
+    typeof value === 'string' &&
+    value.length > maxLength
+  ) {
+    return `${name} too long (${value.length} chars, max ${maxLength})`;
+  }
   return null;
 }
 
@@ -35,13 +51,17 @@ export function formatResponse(structured) {
 
 // ─── READ OPERATIONS ───────────────────────────────────────────────────────────
 
-export async function listWiki(wikiId, limit) {
-  const sections = await db.listSections(wikiId || null, limit);
+// Debounce timestamps for auto-relink on read (key: "wikiId:sectionKey" → timestamp)
+const serviceRelinkTimestamps = new Map();
+const RELINK_DEBOUNCE_MS = parseInt(process.env.RELINK_DEBOUNCE_MS, 10) || 300_000;
+
+export async function listWiki(wikiId, limit, offset = 0) {
+  const sections = await db.listSections(wikiId || null, limit, offset);
   return formatResponse({ sections, count: sections.length });
 }
 
-export async function browseWiki(topic, wikiId, limit) {
-  const sections = await db.browseSections(topic || null, wikiId || null, limit);
+export async function browseWiki(topic, wikiId, limit, offset = 0) {
+  const sections = await db.browseSections(topic || null, wikiId || null, limit, offset);
 
   const byParent = {};
   for (const s of sections) {
@@ -59,8 +79,14 @@ export async function browseWiki(topic, wikiId, limit) {
   return formatResponse({ groups, count: sections.length });
 }
 
-export async function searchWiki(query, wikiId, parent, fuzzy, limit) {
-  const results = await db.searchSections(query, { wikiId: wikiId || null, parent: parent || null, fuzzy, limit });
+export async function searchWiki(query, wikiId, parent, fuzzy, limit, offset = 0) {
+  const results = await db.searchSections(query, {
+    wikiId: wikiId || null,
+    parent: parent || null,
+    fuzzy,
+    limit,
+    offset,
+  });
 
   if (results.length === 0) {
     const similar = await db.findSimilar(query, wikiId || null);
@@ -102,14 +128,20 @@ export async function getWikiSection(key, wikiId, offset, limit, includeBacklink
 
   const relatedSections = await db.getOutgoingLinks(wikiId || section.wikiId, key);
 
-  // Fire-and-forget: track access; auto-link only if section has no links yet
+  // Fire-and-forget: track access; auto-link with debounce to prevent repeated
+  // vector similarity searches on frequently-read orphan sections.
   db.incrementAccessCount(wikiId || section.wikiId, section.key).catch((err) =>
     logger.warn('Failed to increment access count', { key: section.key, error: err.message }),
   );
   if (relatedSections.length === 0) {
-    db.relinkSection(wikiId || section.wikiId, section.key).catch((err) =>
-      logger.warn('Failed to relink section', { key: section.key, error: err.message }),
-    );
+    const relinkKey = `${wikiId || section.wikiId}:${section.key}`;
+    const lastRelink = serviceRelinkTimestamps.get(relinkKey);
+    if (!lastRelink || Date.now() - lastRelink > RELINK_DEBOUNCE_MS) {
+      serviceRelinkTimestamps.set(relinkKey, Date.now());
+      db.relinkSection(wikiId || section.wikiId, section.key).catch((err) =>
+        logger.warn('Failed to relink section', { key: section.key, error: err.message }),
+      );
+    }
   }
 
   let backlinks;
@@ -217,6 +249,14 @@ export async function createSection(wikiId, key, title, content, parent, tags, r
   if (content.length > MAX_CONTENT_SIZE) {
     throw new Error(`Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})`);
   }
+  if (title) {
+    const titleErr = validateField('title', title, MAX_TITLE_LENGTH);
+    if (titleErr) throw new Error(titleErr);
+  }
+  if (parent) {
+    const parentErr = validateField('parent', parent, MAX_PARENT_LENGTH);
+    if (parentErr) throw new Error(parentErr);
+  }
 
   const result = await db.createSection({
     wikiId,
@@ -257,6 +297,10 @@ export async function createSections(wikiId, sections) {
         if (s.content.length > MAX_CONTENT_SIZE) {
           throw new Error(`Content too large (${s.content.length} chars, max ${MAX_CONTENT_SIZE})`);
         }
+        const titleErr = validateField('title', s.title, MAX_TITLE_LENGTH);
+        if (titleErr) throw new Error(titleErr);
+        const parentErr = validateField('parent', s.parent, MAX_PARENT_LENGTH);
+        if (parentErr) throw new Error(parentErr);
 
         const result = await db.createSection({
           wikiId,
@@ -268,7 +312,8 @@ export async function createSections(wikiId, sections) {
           relatedKeys: s.relatedKeys || [],
           skipLink: true,
         });
-        if (result && result.exists) throw new Error(`Section '${s.key}' already exists in ${wikiId}`);
+        if (result && result.exists)
+          throw new Error(`Section '${s.key}' already exists in ${wikiId}`);
         if (!result || !result.key) throw new Error(`Failed to create section '${s.key}'`);
         return result;
       }),
@@ -286,6 +331,11 @@ export async function createSections(wikiId, sections) {
   }
 
   // Phase 2: link all created sections in parallel — now they can all see each other
+  // NOTE: Low-probability edge case — a concurrent auto_link_sections run between
+  //       Phase 1 and Phase 2 could insert links that get overwritten. Since Phase 2
+  //       replaces all links with the correct set (based on relatedKeys or embeddings),
+  //       the final state is always correct. No lock needed. Decision: accepted race,
+  //       minimal consequence (transient links lost, correct final state).
   await Promise.allSettled(
     created.map(({ key, relatedKeys }) =>
       relatedKeys.length > 0
@@ -317,9 +367,20 @@ export async function updateSections(wikiId, updates) {
           throw new Error(`Content too large (${u.content.length} chars, max ${MAX_CONTENT_SIZE})`);
         }
 
-        const hasChanges = u.content !== undefined || u.title !== undefined ||
-          u.parent !== undefined || u.tags !== undefined || u.relatedKeys !== undefined;
+        const hasChanges =
+          u.content !== undefined ||
+          u.title !== undefined ||
+          u.parent !== undefined ||
+          u.tags !== undefined ||
+          u.relatedKeys !== undefined;
         if (!hasChanges) throw new Error('No fields provided to update');
+
+        const titleErr = validateField('title', u.title, MAX_TITLE_LENGTH);
+        if (titleErr) throw new Error(titleErr);
+        const parentErr = validateField('parent', u.parent, MAX_PARENT_LENGTH);
+        if (parentErr) throw new Error(parentErr);
+        const reasonErr = validateField('reason', u.reason, MAX_REASON_LENGTH);
+        if (reasonErr) throw new Error(reasonErr);
 
         const result = await db.updateSection({
           wikiId,
@@ -355,46 +416,6 @@ export async function updateSections(wikiId, updates) {
     successCount: updated.length,
     errorCount: errors.length,
   });
-}
-
-export async function updateSection(
-  wikiId,
-  key,
-  content,
-  title,
-  parent,
-  tags,
-  reason,
-  relatedKeys,
-) {
-  const keyError = validateKey(key);
-  if (keyError) throw new Error(keyError);
-
-  if (content !== undefined && content.length > MAX_CONTENT_SIZE) {
-    throw new Error(`Content too large (${content.length} chars, max ${MAX_CONTENT_SIZE})`);
-  }
-
-  const result = await db.updateSection({
-    wikiId,
-    key,
-    content,
-    title,
-    parent,
-    tags,
-    reason,
-    relatedKeys,
-  });
-  if (result && result.key) {
-    return formatResponse({
-      key: result.key,
-      wikiId: result.wiki_id,
-      title: result.title,
-      updated: true,
-    });
-  }
-  if (result && result.notFound) throw new Error(`Section '${key}' not found in ${wikiId}`);
-  if (result && result.noChanges) throw new Error('No fields provided to update');
-  throw new Error(`Failed to update section '${key}' in ${wikiId}`);
 }
 
 export async function deleteSection(wikiId, key) {
@@ -440,15 +461,44 @@ export async function exportWiki(outputDir, wikiId) {
 
 // ─── AUTO-LINK OPERATIONS ─────────────────────────────────────────────────────
 
+// Simple concurrency semaphore to cap parallel DB connections
+export class Semaphore {
+  constructor(max) {
+    this.max = max;
+    this.current = 0;
+    this.queue = [];
+  }
+  acquire() {
+    if (this.current < this.max) {
+      this.current++;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => this.queue.push(resolve));
+  }
+  release() {
+    if (this.queue.length > 0) {
+      this.queue.shift()();
+    } else {
+      this.current--;
+    }
+  }
+  async run(fn) {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+}
+
 async function processSectionLinks(section, wikiId, options) {
   const { minSimilarity, maxLinks, override, reembed } = options;
 
   // Regenerate embedding if requested
   if (reembed) {
     try {
-      const embedding = await getEmbedding(
-        `${section.title}\n${section.content.slice(0, 2000)}`,
-      );
+      const embedding = await getEmbedding(`${section.title}\n${section.content.slice(0, 2000)}`);
       await db.updateSectionEmbedding(section.wikiId, section.key, embedding);
     } catch (err) {
       logger.warn('processSectionLinks: Failed to re-embed', {
@@ -487,7 +537,13 @@ async function processSectionLinks(section, wikiId, options) {
 }
 
 export async function autoLinkSections(wikiId, options = {}) {
-  const { minSimilarity = 0.1, maxLinks = 4, override = false, parallel = true, reembed = false } = options;
+  const {
+    minSimilarity = 0.1,
+    maxLinks = 4,
+    override = false,
+    parallel = true,
+    reembed = false,
+  } = options;
 
   const sections = await db.getAllSectionsWithEmbeddings(wikiId || null);
   const sectionsWithEmbeddings = sections.filter((s) => s.embedding);
@@ -501,16 +557,21 @@ export async function autoLinkSections(wikiId, options = {}) {
   let skipped = 0;
 
   if (parallel) {
-    // Process in parallel using Promise.all
+    const MAX_CONCURRENCY = parseInt(process.env.AUTO_LINK_CONCURRENCY, 10) || 10;
+    const sem = new Semaphore(MAX_CONCURRENCY);
     const results = await Promise.all(
       sectionsWithEmbeddings.map((section) =>
-        processSectionLinks(section, wikiId, { minSimilarity, maxLinks, override, reembed }).catch((err) => {
-          logger.warn('autoLinkSections: Error processing section', {
-            key: section.key,
-            error: err.message,
-          });
-          return { skipped: 1, updated: 0 };
-        }),
+        sem
+          .run(() =>
+            processSectionLinks(section, wikiId, { minSimilarity, maxLinks, override, reembed }),
+          )
+          .catch((err) => {
+            logger.warn('autoLinkSections: Error processing section', {
+              key: section.key,
+              error: err.message,
+            });
+            return { skipped: 1, updated: 0 };
+          }),
       ),
     );
     for (const result of results) {

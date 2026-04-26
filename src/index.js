@@ -38,6 +38,8 @@ const server = new McpServer({
   version: '2.0.0',
 });
 
+// NOTE: Request counts are in-memory only (lost on restart). For production
+//       observability, expose via /metrics endpoint or export to a time-series store.
 const requestCounts = {
   list: 0,
   browse: 0,
@@ -79,8 +81,7 @@ const sectionRefSchema = {
 server.registerTool(
   'list',
   {
-    description:
-      'List all available section keys. Use browse instead for topic-filtered results.',
+    description: 'List all available section keys. Use browse instead for topic-filtered results.',
     inputSchema: {
       ...wikiIdField(),
       limit: z
@@ -88,6 +89,11 @@ server.registerTool(
         .optional()
         .default(100)
         .describe('Maximum sections to return (default 100)'),
+      offset: z
+        .number()
+        .optional()
+        .default(0)
+        .describe('Number of sections to skip (for pagination)'),
     },
     outputSchema: {
       sections: z
@@ -106,11 +112,11 @@ server.registerTool(
     },
     annotations: readOnlyAnnotations,
   },
-  async ({ wikiId, limit }) => {
+  async ({ wikiId, limit, offset }) => {
     try {
       requestCounts.list++;
-      logger.info('list', { wikiId, limit });
-      return await service.listWiki(resolveWikiId(wikiId), limit);
+      logger.info('list', { wikiId, limit, offset });
+      return await service.listWiki(resolveWikiId(wikiId), limit, offset || 0);
     } catch (err) {
       logger.error('list failed', { error: err.message });
       return service.formatResponse({ sections: [], count: 0, error: err.message });
@@ -136,6 +142,11 @@ server.registerTool(
         .optional()
         .default(100)
         .describe('Maximum sections to return (default 100)'),
+      offset: z
+        .number()
+        .optional()
+        .default(0)
+        .describe('Number of sections to skip (for pagination)'),
     },
     outputSchema: {
       groups: z
@@ -159,11 +170,11 @@ server.registerTool(
     },
     annotations: readOnlyAnnotations,
   },
-  async ({ topic, wikiId, limit }) => {
+  async ({ topic, wikiId, limit, offset }) => {
     try {
       requestCounts.browse++;
-      logger.info('browse', { topic, wikiId, limit });
-      return await service.browseWiki(topic, resolveWikiId(wikiId), limit);
+      logger.info('browse', { topic, wikiId, limit, offset });
+      return await service.browseWiki(topic, resolveWikiId(wikiId), limit, offset || 0);
     } catch (err) {
       logger.error('browse failed', { topic, wikiId, error: err.message });
       return service.formatResponse({ groups: [], count: 0, error: err.message });
@@ -182,13 +193,15 @@ server.registerTool(
         .min(1)
         .max(200)
         .describe('Search query — can be natural language or keywords'),
-      parent: z
-        .string()
-        .optional()
-        .describe('Filter by parent topic (e.g., "Portage Backend")'),
+      parent: z.string().optional().describe('Filter by parent topic (e.g., "Portage Backend")'),
       ...wikiIdField(),
       fuzzy: z.boolean().optional().default(false).describe('Enable fuzzy matching for typos'),
       limit: z.number().optional().default(20).describe('Maximum number of results to return'),
+      offset: z
+        .number()
+        .optional()
+        .default(0)
+        .describe('Number of results to skip (for pagination)'),
     },
     outputSchema: {
       results: z
@@ -209,11 +222,11 @@ server.registerTool(
     },
     annotations: readOnlyAnnotations,
   },
-  async ({ query, wikiId, parent, fuzzy, limit }) => {
+  async ({ query, wikiId, parent, fuzzy, limit, offset }) => {
     try {
       requestCounts.search++;
-      logger.info('search', { query, wikiId, parent, fuzzy, limit });
-      return await service.searchWiki(query, resolveWikiId(wikiId), parent, fuzzy, limit);
+      logger.info('search', { query, wikiId, parent, fuzzy, limit, offset });
+      return await service.searchWiki(query, resolveWikiId(wikiId), parent, fuzzy, limit, offset || 0);
     } catch (err) {
       logger.error('search failed', { query, error: err.message });
       return service.formatResponse({ results: [], count: 0, error: err.message });
@@ -259,7 +272,11 @@ server.registerTool(
       limit: z.number().optional().describe('Applied character limit'),
       hasMore: z.boolean().optional().describe('Whether more content exists beyond this page'),
       nextOffset: z.number().optional().describe('Offset for the next page, if hasMore is true'),
-      updatedAt: z.string().nullable().optional().describe('ISO 8601 timestamp of the last update, or null if unknown'),
+      updatedAt: z
+        .string()
+        .nullable()
+        .optional()
+        .describe('ISO 8601 timestamp of the last update, or null if unknown'),
       relatedSections: z
         .array(
           z.object({
@@ -293,7 +310,13 @@ server.registerTool(
     try {
       requestCounts.get_section++;
       logger.info('get_section', { key, wikiId, offset, limit, includeBacklinks });
-      return await service.getWikiSection(key, resolveWikiId(wikiId), offset, limit, includeBacklinks);
+      return await service.getWikiSection(
+        key,
+        resolveWikiId(wikiId),
+        offset,
+        limit,
+        includeBacklinks,
+      );
     } catch (err) {
       logger.error('get_section failed', { key, error: err.message });
       return service.formatResponse({ error: err.message });
@@ -304,8 +327,7 @@ server.registerTool(
 server.registerTool(
   'get_sections',
   {
-    description:
-      'Retrieve multiple sections at once. Each section is truncated to save tokens.',
+    description: 'Retrieve multiple sections at once. Each section is truncated to save tokens.',
     inputSchema: {
       keys: z
         .array(z.string())
@@ -331,7 +353,11 @@ server.registerTool(
                 .number()
                 .optional()
                 .describe('Total content length (present when truncated)'),
-              updatedAt: z.string().nullable().optional().describe('ISO 8601 timestamp of the last update, or null if unknown'),
+              updatedAt: z
+                .string()
+                .nullable()
+                .optional()
+                .describe('ISO 8601 timestamp of the last update, or null if unknown'),
             }),
             z.object({
               key: z.string().describe('Requested section slug key'),
@@ -436,7 +462,12 @@ server.registerTool(
       return await service.getBacklinks(key, resolveWikiId(wikiId), limit);
     } catch (err) {
       logger.error('get_backlinks failed', { key, error: err.message });
-      return service.formatResponse({ backlinks: [], count: 0, hasMore: false, error: err.message });
+      return service.formatResponse({
+        backlinks: [],
+        count: 0,
+        hasMore: false,
+        error: err.message,
+      });
     }
   },
 );
@@ -452,8 +483,12 @@ server.registerTool(
     outputSchema: {
       healthy: z.boolean().describe('True if no issues found'),
       emptySectionsCount: z.number().describe('Number of sections with no content'),
-      orphanedSectionsCount: z.number().describe('Number of sections with no parent, children, or backlinks'),
-      unlinkedSectionsCount: z.number().describe('Number of sections not linked from any other section'),
+      orphanedSectionsCount: z
+        .number()
+        .describe('Number of sections with no parent, children, or backlinks'),
+      unlinkedSectionsCount: z
+        .number()
+        .describe('Number of sections not linked from any other section'),
       error: z.string().optional().describe('Error message if request failed'),
     },
     annotations: readOnlyAnnotations,
@@ -547,7 +582,15 @@ server.registerTool(
     try {
       requestCounts.create++;
       logger.info('create', { wikiId, key, title });
-      return await service.createSection(resolveWikiId(wikiId), key, title, content, null, tags, relatedKeys);
+      return await service.createSection(
+        resolveWikiId(wikiId),
+        key,
+        title,
+        content,
+        null,
+        tags,
+        relatedKeys,
+      );
     } catch (err) {
       logger.error('create failed', { key, error: err.message });
       return service.formatResponse({ created: false, error: err.message });
@@ -567,7 +610,9 @@ server.registerTool(
           z.object({
             key: z.string().describe('Unique slug key (lowercase alphanumeric with hyphens)'),
             title: z.string().describe('Display title'),
-            content: z.string().describe('Markdown content. Keep bite-sized: 3–4 bullets or sentences max.'),
+            content: z
+              .string()
+              .describe('Markdown content. Keep bite-sized: 3–4 bullets or sentences max.'),
             parent: z.string().describe('Parent topic name'),
             tags: z.array(z.string()).optional().describe('Tags for categorization'),
             relatedKeys: z.array(z.string()).optional().describe('Explicit links for this section'),
@@ -595,7 +640,12 @@ server.registerTool(
       return await service.createSections(resolveWikiId(wikiId), sections);
     } catch (err) {
       logger.error('create_sections failed', { wikiId, error: err.message });
-      return service.formatResponse({ created: [], errors: [], successCount: 0, errorCount: sections.length });
+      return service.formatResponse({
+        created: [],
+        errors: [],
+        successCount: 0,
+        errorCount: sections.length,
+      });
     }
   },
 );
@@ -616,7 +666,10 @@ server.registerTool(
             parent: z.string().optional().describe('New parent topic'),
             tags: z.array(z.string()).optional().describe('New tags'),
             reason: z.string().optional().describe('Reason for the change (recorded in history)'),
-            relatedKeys: z.array(z.string()).optional().describe('Replace outgoing links with these section keys'),
+            relatedKeys: z
+              .array(z.string())
+              .optional()
+              .describe('Replace outgoing links with these section keys'),
           }),
         )
         .min(1)
@@ -641,7 +694,12 @@ server.registerTool(
       return await service.updateSections(resolveWikiId(wikiId), updates);
     } catch (err) {
       logger.error('update_sections failed', { wikiId, error: err.message });
-      return service.formatResponse({ updated: [], errors: [], successCount: 0, errorCount: updates.length });
+      return service.formatResponse({
+        updated: [],
+        errors: [],
+        successCount: 0,
+        errorCount: updates.length,
+      });
     }
   },
 );
@@ -721,7 +779,14 @@ server.registerTool(
     try {
       const resolvedWikiId = resolveWikiId(wikiId);
       requestCounts.auto_link_sections = (requestCounts.auto_link_sections || 0) + 1;
-      logger.info('auto_link_sections', { wikiId: resolvedWikiId, minSimilarity, maxLinks, override, reembed, parallel });
+      logger.info('auto_link_sections', {
+        wikiId: resolvedWikiId,
+        minSimilarity,
+        maxLinks,
+        override,
+        reembed,
+        parallel,
+      });
 
       // If already running for this wiki, reject
       const taskKey = resolvedWikiId || 'default';
@@ -739,7 +804,13 @@ server.registerTool(
       jobStatuses.set(jobId, { wikiId: resolvedWikiId, status: 'running', startedAt });
 
       // Run in background and track for shutdown
-      const task = service.autoLinkSections(resolvedWikiId, { minSimilarity, maxLinks, override, reembed, parallel });
+      const task = service.autoLinkSections(resolvedWikiId, {
+        minSimilarity,
+        maxLinks,
+        override,
+        reembed,
+        parallel,
+      });
       backgroundTasks.set(taskKey, task);
       task
         .then(() => {
@@ -751,7 +822,11 @@ server.registerTool(
           }
         })
         .catch((err) => {
-          logger.error('auto_link_sections failed (background)', { wikiId: resolvedWikiId, jobId, error: err.message });
+          logger.error('auto_link_sections failed (background)', {
+            wikiId: resolvedWikiId,
+            jobId,
+            error: err.message,
+          });
           const job = jobStatuses.get(jobId);
           if (job) {
             job.status = 'failed';
@@ -789,7 +864,9 @@ server.registerTool(
     outputSchema: z.object({
       jobId: z.string().describe('Job ID'),
       wikiId: z.string().optional().describe('Wiki instance ID'),
-      status: z.enum(['running', 'completed', 'failed', 'not_found']).describe('Current job status'),
+      status: z
+        .enum(['running', 'completed', 'failed', 'not_found'])
+        .describe('Current job status'),
       startedAt: z.string().optional().describe('ISO timestamp when job started'),
       completedAt: z.string().optional().describe('ISO timestamp when job completed or failed'),
       error: z.string().optional().describe('Error message if job failed'),
@@ -966,6 +1043,13 @@ logger.info('Starting Wiki Explorer V2 MCP Server', {
   pid: process.pid,
   node: process.version,
 });
+
+// Startup health checks
+if (process.env.TRANSPORT === 'http') {
+  logger.warn(
+    'HTTP mode: run behind a TLS-terminating reverse proxy (nginx, Caddy) for production.',
+  );
+}
 
 // In stdio mode, auto-create the database so migrations can run.
 // HTTP mode doesn't need this — the admin DB is separate, and client DBs

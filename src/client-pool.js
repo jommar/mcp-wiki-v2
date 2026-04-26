@@ -14,18 +14,20 @@ export async function getClientPool(dbName) {
   if (pools.has(dbName)) return pools.get(dbName);
 
   const pool = new Pool({
-    host:     process.env.DB_HOST     || 'localhost',
-    port:     parseInt(process.env.DB_PORT, 10) || 5433,
-    user:     process.env.DB_USER     || 'wiki',
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT, 10) || 5433,
+    user: process.env.DB_USER || 'wiki',
     password: process.env.DB_PASSWORD || 'wiki',
     database: dbName,
     max: 5,
-    idleTimeoutMillis:     30_000,
+    idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
   });
 
   try {
-    await pool.query('CREATE EXTENSION IF NOT EXISTS fuzzystrmatch').catch(() => {});
+    await pool.query('CREATE EXTENSION IF NOT EXISTS fuzzystrmatch').catch((err) => {
+      logger.warn('Failed to create fuzzystrmatch extension', { db: dbName, error: err.message });
+    });
     await runWikiMigrations(pool);
     pools.set(dbName, pool);
     logger.info('Client DB ready', { db: dbName });
