@@ -31,7 +31,10 @@ const WIKI_SQL_DIR = path.join(__dirname, '..', 'sql', 'wiki');
 
 function getSqlFiles() {
   if (!fs.existsSync(WIKI_SQL_DIR)) return [];
-  return fs.readdirSync(WIKI_SQL_DIR).filter((f) => f.endsWith('.sql')).sort();
+  return fs
+    .readdirSync(WIKI_SQL_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
 }
 
 async function applyMigrations(p) {

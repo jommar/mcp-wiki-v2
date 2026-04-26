@@ -46,6 +46,7 @@ This handles everything on first run and on restarts:
 - Prints container health, wiki instance counts, and your MCP config path
 
 The three containers started:
+
 - **wiki-db** — PostgreSQL 16 with pgvector (port 5433)
 - **wiki-server** — Node.js MCP server (volume-mounted for live editing)
 - **wiki-cron** — Daily auto-relink job at 3am
@@ -102,7 +103,9 @@ Add to `~/.claude.json` under `mcpServers`. The server runs inside the Docker co
     "wiki": {
       "command": "ssh",
       "args": [
-        "-T", "-o", "StrictHostKeyChecking=no",
+        "-T",
+        "-o",
+        "StrictHostKeyChecking=no",
         "user@host",
         "docker exec -i wiki-v2-server node src/index.js"
       ]
@@ -121,7 +124,9 @@ Register the same server twice under different names — one without `WIKI_ID` (
     "wiki": {
       "command": "ssh",
       "args": [
-        "-T", "-o", "StrictHostKeyChecking=no",
+        "-T",
+        "-o",
+        "StrictHostKeyChecking=no",
         "user@host",
         "docker exec -i wiki-v2-server node src/index.js"
       ]
@@ -129,7 +134,9 @@ Register the same server twice under different names — one without `WIKI_ID` (
     "memory": {
       "command": "ssh",
       "args": [
-        "-T", "-o", "StrictHostKeyChecking=no",
+        "-T",
+        "-o",
+        "StrictHostKeyChecking=no",
         "user@host",
         "docker exec -i -e WIKI_ID=memory wiki-v2-server node src/index.js"
       ]
@@ -202,28 +209,28 @@ HTTP mode applies per-IP rate limiting: 10 failed auth attempts per minute befor
 
 ### Discovery
 
-| Tool        | Description                                                    |
-| ----------- | -------------------------------------------------------------- |
-| `get_info`  | Get instance metadata and section counts                       |
-| `browse`    | Browse sections grouped by parent topic; supports `limit` and `offset` for pagination |
-| `list`      | List all sections, optionally filtered by `wikiId`; supports `limit` and `offset`; includes tags and linkCount |
+| Tool       | Description                                                                                                    |
+| ---------- | -------------------------------------------------------------------------------------------------------------- |
+| `get_info` | Get instance metadata and section counts                                                                       |
+| `browse`   | Browse sections grouped by parent topic; supports `limit` and `offset` for pagination                          |
+| `list`     | List all sections, optionally filtered by `wikiId`; supports `limit` and `offset`; includes tags and linkCount |
 
 ### Reading
 
-| Tool            | Description                                                                  |
-| --------------- | ---------------------------------------------------------------------------- |
-| `search`        | Semantic search by meaning (falls back to keyword if embeddings unavailable); supports `parent` filter and `offset` pagination; results include content snippets |
-| `get_section`   | Get a single section with content pagination; `includeBacklinks` optional; returns `backlinksHasMore` when backlinks are paginated |
-| `get_sections`  | Batch retrieve multiple sections (max 20 at once)                            |
+| Tool           | Description                                                                                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `search`       | Semantic search by meaning (falls back to keyword if embeddings unavailable); supports `parent` filter and `offset` pagination; results include content snippets |
+| `get_section`  | Get a single section with content pagination; `includeBacklinks` optional; returns `backlinksHasMore` when backlinks are paginated                               |
+| `get_sections` | Batch retrieve multiple sections (max 20 at once)                                                                                                                |
 
 ### Writing
 
-| Tool              | Description                                                                   |
-| ----------------- | ----------------------------------------------------------------------------- |
-| `create`          | Create a root-level section with no parent (entry point for a new instance)   |
+| Tool              | Description                                                                                         |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
+| `create`          | Create a root-level section with no parent (entry point for a new instance)                         |
 | `create_sections` | Batch-create multiple sections in parallel; all sections link to each other after creation (max 20) |
-| `update_sections` | Batch-update existing sections (embedding auto-regenerated, history auto-tracked) |
-| `delete_section`  | Delete a section and its backlinks (run `get_backlinks` first)                |
+| `update_sections` | Batch-update existing sections (embedding auto-regenerated, history auto-tracked)                   |
+| `delete_section`  | Delete a section and its backlinks (run `get_backlinks` first)                                      |
 
 ### Import/Export
 
@@ -234,45 +241,45 @@ HTTP mode applies per-IP rate limiting: 10 failed auth attempts per minute befor
 
 ### Management
 
-| Tool                   | Description                                                                   |
-| ---------------------- | ----------------------------------------------------------------------------- |
-| `get_backlinks`        | Find sections that link to a given section; accepts `limit`, returns `hasMore` |
-| `validate`             | Find empty, orphaned, and unlinked sections; returns counts and a `healthy` boolean |
-| `get_section_history`  | View edit history for a section (`wikiId` optional)                           |
-| `auto_link_sections`   | Auto-link sections via embedding similarity (background job; returns `jobId`) |
-| `get_job_status`       | Poll the status of a background job by `jobId`                                |
+| Tool                  | Description                                                                         |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| `get_backlinks`       | Find sections that link to a given section; accepts `limit`, returns `hasMore`      |
+| `validate`            | Find empty, orphaned, and unlinked sections; returns counts and a `healthy` boolean |
+| `get_section_history` | View edit history for a section (`wikiId` optional)                                 |
+| `auto_link_sections`  | Auto-link sections via embedding similarity (background job; returns `jobId`)       |
+| `get_job_status`      | Poll the status of a background job by `jobId`                                      |
 
 ### `auto_link_sections` Options
 
-| Option      | Description                                              |
-| ----------- | -------------------------------------------------------- |
-| `override`  | Re-link sections that already have links                 |
-| `reembed`   | Regenerate embeddings before linking                     |
-| `parallel`  | Process sections in parallel (default: true)             |
-| `minSimilarity` | Minimum cosine similarity threshold (0-1, default 0.1) |
-| `maxLinks`  | Maximum number of related links per section (default 4)  |
+| Option          | Description                                             |
+| --------------- | ------------------------------------------------------- |
+| `override`      | Re-link sections that already have links                |
+| `reembed`       | Regenerate embeddings before linking                    |
+| `parallel`      | Process sections in parallel (default: true)            |
+| `minSimilarity` | Minimum cosine similarity threshold (0-1, default 0.1)  |
+| `maxLinks`      | Maximum number of related links per section (default 4) |
 
 This tool runs in the background and returns an immediate status message. A cron job also runs it daily at 3am via the `wiki-cron` container.
 
 ## Scripts
 
-| Script                          | Purpose                                        |
-| ------------------------------- | ---------------------------------------------- |
-| `./start.sh`                    | Start all containers, install deps if needed, print status and MCP config |
-| `npm start`                     | Start the MCP server (outside Docker)          |
-| `npm run dev`                   | Start with MCP inspector for debugging         |
-| `npm run import`                | Import markdown from `import/staging/`         |
-| `npm run export`                | Export all wikis to `export/` directory        |
-| `npm run db:up`                 | Start database via docker-compose              |
-| `npm run db:down`               | Stop database via docker-compose               |
-| `npm run lint` / `lint:fix`     | Run ESLint                                     |
-| `npm run format` / `format:check` | Run Prettier                                 |
-| `npm run check`                 | Run lint + format check                        |
-| `npm run fix`                   | Run lint:fix + format                          |
-| `npm run admin`                 | Open the admin TUI dashboard (blessed)        |
-| `npm test`                      | Run full test suite (unit + integration)       |
-| `npm run test:unit`             | Run unit tests only                            |
-| `npm run test:integration`      | Run integration tests only (requires DB)       |
+| Script                            | Purpose                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------- |
+| `./start.sh`                      | Start all containers, install deps if needed, print status and MCP config |
+| `npm start`                       | Start the MCP server (outside Docker)                                     |
+| `npm run dev`                     | Start with MCP inspector for debugging                                    |
+| `npm run import`                  | Import markdown from `import/staging/`                                    |
+| `npm run export`                  | Export all wikis to `export/` directory                                   |
+| `npm run db:up`                   | Start database via docker-compose                                         |
+| `npm run db:down`                 | Stop database via docker-compose                                          |
+| `npm run lint` / `lint:fix`       | Run ESLint                                                                |
+| `npm run format` / `format:check` | Run Prettier                                                              |
+| `npm run check`                   | Run lint + format check                                                   |
+| `npm run fix`                     | Run lint:fix + format                                                     |
+| `npm run admin`                   | Open the admin TUI dashboard (blessed)                                    |
+| `npm test`                        | Run full test suite (unit + integration)                                  |
+| `npm run test:unit`               | Run unit tests only                                                       |
+| `npm run test:integration`        | Run integration tests only (requires DB)                                  |
 
 ### Import Directory Structure
 
@@ -293,29 +300,29 @@ Uses `@xenova/transformers` with `all-MiniLM-L6-v2` (384-dim, quantized) — run
 
 ## Database Schema
 
-| Table             | Purpose                                                                  |
-| ----------------- | ------------------------------------------------------------------------ |
-| `wiki_sections`   | Main content table with FTS, vector, and access tracking columns         |
-| `section_links`   | Canonical source of truth for wiki relationships (auto-populated)        |
-| `section_history` | Version history (auto-populated on updates)                              |
-| `migrations`      | Tracks applied migration files                                           |
+| Table             | Purpose                                                           |
+| ----------------- | ----------------------------------------------------------------- |
+| `wiki_sections`   | Main content table with FTS, vector, and access tracking columns  |
+| `section_links`   | Canonical source of truth for wiki relationships (auto-populated) |
+| `section_history` | Version history (auto-populated on updates)                       |
+| `migrations`      | Tracks applied migration files                                    |
 
 ### `wiki_sections` Columns
 
-| Column           | Type        | Description                                    |
-| ---------------- | ----------- | ---------------------------------------------- |
-| `key`            | VARCHAR     | Unique slug key (PK)                           |
-| `wiki_id`        | VARCHAR     | Wiki instance ID                               |
-| `title`          | VARCHAR     | Display title                                  |
-| `parent`         | VARCHAR     | Parent topic/group                             |
-| `content`        | TEXT        | Markdown content                               |
-| `tags`           | TEXT[]      | Category tags                                  |
-| `embedding`      | vector(384) | Semantic embedding (auto-generated)            |
-| `search_vector`  | tsvector    | Full-text search index (auto-populated)        |
-| `access_count`   | INT         | Read count (capped at 9999)                    |
-| `last_accessed`  | TIMESTAMPTZ | Last read timestamp                            |
-| `created_at`     | TIMESTAMPTZ | Creation timestamp                             |
-| `updated_at`     | TIMESTAMPTZ | Last update timestamp                          |
+| Column          | Type        | Description                             |
+| --------------- | ----------- | --------------------------------------- |
+| `key`           | VARCHAR     | Unique slug key (PK)                    |
+| `wiki_id`       | VARCHAR     | Wiki instance ID                        |
+| `title`         | VARCHAR     | Display title                           |
+| `parent`        | VARCHAR     | Parent topic/group                      |
+| `content`       | TEXT        | Markdown content                        |
+| `tags`          | TEXT[]      | Category tags                           |
+| `embedding`     | vector(384) | Semantic embedding (auto-generated)     |
+| `search_vector` | tsvector    | Full-text search index (auto-populated) |
+| `access_count`  | INT         | Read count (capped at 9999)             |
+| `last_accessed` | TIMESTAMPTZ | Last read timestamp                     |
+| `created_at`    | TIMESTAMPTZ | Creation timestamp                      |
+| `updated_at`    | TIMESTAMPTZ | Last update timestamp                   |
 
 ### Key Features
 
@@ -343,25 +350,25 @@ The migration runner creates a `migrations` table to track applied files. On fir
 
 ## Environment Variables
 
-| Variable                  | Default     | Description                               |
-| ------------------------- | ----------- | ----------------------------------------- |
-| `DB_HOST`                 | `localhost` | PostgreSQL host                           |
-| `DB_PORT`                 | `5433`      | PostgreSQL port                           |
-| `DB_USER`                 | `wiki`      | Database user                             |
-| `DB_PASSWORD`             | `wiki`      | Database password                         |
-| `DB_NAME`                 | `wiki`      | Database name                             |
-| `TRANSPORT`               | `stdio`     | Transport mode: `stdio` (local) or `http` (remote) |
-| `PORT`                    | `3000`      | HTTP port (only used when `TRANSPORT=http`) |
-| `WIKI_ID`                 | *(unset)*   | Default wiki ID for stdio mode. When set, `wikiId` is omitted from all tool schemas and resolved automatically. In HTTP mode this is ignored — wiki ID comes from the API key. |
-| `TRUST_PROXY`             | *(unset)*   | Set to `true` to read the real client IP from `X-Forwarded-For` (enable when behind a reverse proxy for correct rate limiting) |
-| `AUTH_CACHE_TTL_MS`       | `300000`    | How long (ms) a successful auth is cached before re-verification (default 5 min) |
-| `AUTH_FAILED_CACHE_TTL_MS`| `60000`     | How long (ms) a failed token attempt is cached to skip bcrypt re-evaluation (default 1 min) |
-| `MAX_LINKS_PER_SECTION`   | `4`         | Max outgoing links per section for auto-linking |
-| `SIMILARITY_THRESHOLD`    | `0.1`       | Minimum cosine similarity score to use semantic search results (falls back to keyword below this) |
-| `RELINK_DEBOUNCE_MS`      | `300000`    | Minimum interval (ms) between auto-relink triggers for the same section on read (default 5 min) |
-| `AUTO_LINK_CONCURRENCY`   | `10`        | Max parallel DB connections used during `auto_link_sections` |
-| `LOG_LEVEL`               | `info`      | Log level (debug, info, warn, error)      |
-| `LOG_DIR`                 | `logs`      | Log directory                             |
+| Variable                   | Default     | Description                                                                                                                                                                    |
+| -------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DB_HOST`                  | `localhost` | PostgreSQL host                                                                                                                                                                |
+| `DB_PORT`                  | `5433`      | PostgreSQL port                                                                                                                                                                |
+| `DB_USER`                  | `wiki`      | Database user                                                                                                                                                                  |
+| `DB_PASSWORD`              | `wiki`      | Database password                                                                                                                                                              |
+| `DB_NAME`                  | `wiki`      | Database name                                                                                                                                                                  |
+| `TRANSPORT`                | `stdio`     | Transport mode: `stdio` (local) or `http` (remote)                                                                                                                             |
+| `PORT`                     | `3000`      | HTTP port (only used when `TRANSPORT=http`)                                                                                                                                    |
+| `WIKI_ID`                  | _(unset)_   | Default wiki ID for stdio mode. When set, `wikiId` is omitted from all tool schemas and resolved automatically. In HTTP mode this is ignored — wiki ID comes from the API key. |
+| `TRUST_PROXY`              | _(unset)_   | Set to `true` to read the real client IP from `X-Forwarded-For` (enable when behind a reverse proxy for correct rate limiting)                                                 |
+| `AUTH_CACHE_TTL_MS`        | `300000`    | How long (ms) a successful auth is cached before re-verification (default 5 min)                                                                                               |
+| `AUTH_FAILED_CACHE_TTL_MS` | `60000`     | How long (ms) a failed token attempt is cached to skip bcrypt re-evaluation (default 1 min)                                                                                    |
+| `MAX_LINKS_PER_SECTION`    | `4`         | Max outgoing links per section for auto-linking                                                                                                                                |
+| `SIMILARITY_THRESHOLD`     | `0.1`       | Minimum cosine similarity score to use semantic search results (falls back to keyword below this)                                                                              |
+| `RELINK_DEBOUNCE_MS`       | `300000`    | Minimum interval (ms) between auto-relink triggers for the same section on read (default 5 min)                                                                                |
+| `AUTO_LINK_CONCURRENCY`    | `10`        | Max parallel DB connections used during `auto_link_sections`                                                                                                                   |
+| `LOG_LEVEL`                | `info`      | Log level (debug, info, warn, error)                                                                                                                                           |
+| `LOG_DIR`                  | `logs`      | Log directory                                                                                                                                                                  |
 
 ## Migration from V1
 

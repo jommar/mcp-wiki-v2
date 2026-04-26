@@ -81,7 +81,9 @@ function writeTestFile(content) {
 function cleanTestFile(filePath) {
   try {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 // ─── Setup / Teardown ────────────────────────────────────────────────────────
@@ -134,7 +136,10 @@ This section was imported via async readFile.
       assert.equal(rows[0].content, 'This section was imported via async readFile.');
     } finally {
       cleanTestFile(filePath);
-      await testPool.query('DELETE FROM wiki_sections WHERE wiki_id = $1 AND key = $2', [TEST_WIKI, 'test-async-read']);
+      await testPool.query('DELETE FROM wiki_sections WHERE wiki_id = $1 AND key = $2', [
+        TEST_WIKI,
+        'test-async-read',
+      ]);
     }
   });
 });
@@ -164,7 +169,10 @@ This should go to custom-wiki, not the filename-derived wiki.
       assert.equal(rows[0].wiki_id, 'custom-wiki');
     } finally {
       cleanTestFile(filePath);
-      await testPool.query('DELETE FROM wiki_sections WHERE wiki_id = $1 AND key = $2', ['custom-wiki', 'test-wiki-id-override']);
+      await testPool.query('DELETE FROM wiki_sections WHERE wiki_id = $1 AND key = $2', [
+        'custom-wiki',
+        'test-wiki-id-override',
+      ]);
     }
   });
 
@@ -189,7 +197,10 @@ This should use the filename-derived wiki_id.
       assert.equal(rows.length, 1);
     } finally {
       cleanTestFile(filePath);
-      await testPool.query('DELETE FROM wiki_sections WHERE wiki_id = $1 AND key = $2', [TEST_WIKI, 'test-no-override']);
+      await testPool.query('DELETE FROM wiki_sections WHERE wiki_id = $1 AND key = $2', [
+        TEST_WIKI,
+        'test-no-override',
+      ]);
     }
   });
 
@@ -210,7 +221,10 @@ Invalid wiki_id should be ignored.
       assert.equal(result.wikiId, TEST_WIKI);
     } finally {
       cleanTestFile(filePath);
-      await testPool.query('DELETE FROM wiki_sections WHERE wiki_id = $1 AND key = $2', [TEST_WIKI, 'test-invalid-wiki-id']);
+      await testPool.query('DELETE FROM wiki_sections WHERE wiki_id = $1 AND key = $2', [
+        TEST_WIKI,
+        'test-invalid-wiki-id',
+      ]);
     }
   });
 });

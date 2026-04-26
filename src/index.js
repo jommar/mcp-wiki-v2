@@ -7,6 +7,8 @@ import { config } from 'dotenv';
 import { logger } from '../logger.js';
 import * as service from './service.js';
 import { requestContext } from './context.js';
+import * as db from './db.js';
+import { drainAllPools } from './client-pool.js';
 
 config();
 
@@ -226,7 +228,14 @@ server.registerTool(
     try {
       requestCounts.search++;
       logger.info('search', { query, wikiId, parent, fuzzy, limit, offset });
-      return await service.searchWiki(query, resolveWikiId(wikiId), parent, fuzzy, limit, offset || 0);
+      return await service.searchWiki(
+        query,
+        resolveWikiId(wikiId),
+        parent,
+        fuzzy,
+        limit,
+        offset || 0,
+      );
     } catch (err) {
       logger.error('search failed', { query, error: err.message });
       return service.formatResponse({ results: [], count: 0, error: err.message });
@@ -973,8 +982,6 @@ server.registerTool(
 
 // ─── SHUTDOWN ────────────────────────────────────────────────────────────────
 
-import * as db from './db.js';
-
 let httpServer = null;
 
 async function shutdown() {
@@ -1005,6 +1012,7 @@ async function shutdown() {
   }
 
   await db.pool.end();
+  await drainAllPools();
   logger.close().then(() => process.exit(0));
 }
 

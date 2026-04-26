@@ -54,7 +54,9 @@ before(async () => {
   // Connect to 'postgres' bootstrap DB to create test DB if needed
   adminPool = new Pool({ ...BASE_CONFIG, database: 'postgres', max: 1 });
   try {
-    const { rows } = await adminPool.query('SELECT 1 FROM pg_database WHERE datname = $1', [TEST_DB]);
+    const { rows } = await adminPool.query('SELECT 1 FROM pg_database WHERE datname = $1', [
+      TEST_DB,
+    ]);
     if (rows.length === 0) {
       await adminPool.query(`CREATE DATABASE "${TEST_DB.replace(/"/g, '""')}"`);
     }
@@ -112,18 +114,31 @@ before(async () => {
 
   // Create indexes (skip if they exist)
   await testPool.query('CREATE INDEX IF NOT EXISTS idx_ws_wiki_key ON wiki_sections(wiki_id, key)');
-  await testPool.query('CREATE INDEX IF NOT EXISTS idx_sl_from ON section_links(from_wiki_id, from_key)');
+  await testPool.query(
+    'CREATE INDEX IF NOT EXISTS idx_sl_from ON section_links(from_wiki_id, from_key)',
+  );
   await testPool.query('CREATE INDEX IF NOT EXISTS idx_sl_to ON section_links(to_wiki_id, to_key)');
-  await testPool.query('CREATE INDEX IF NOT EXISTS idx_sh_lookup ON section_history(wiki_id, section_key, changed_at DESC)');
+  await testPool.query(
+    'CREATE INDEX IF NOT EXISTS idx_sh_lookup ON section_history(wiki_id, section_key, changed_at DESC)',
+  );
 });
 
 after(async () => {
   // Clean up all created test data
   if (testPool) {
     for (const key of CREATED_KEYS) {
-      await testPool.query('DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2', [TEST_WIKI, key]);
-      await testPool.query('DELETE FROM section_links WHERE to_wiki_id = $1 AND to_key = $2', [TEST_WIKI, key]);
-      await testPool.query('DELETE FROM section_history WHERE wiki_id = $1 AND section_key = $2', [TEST_WIKI, key]);
+      await testPool.query('DELETE FROM section_links WHERE from_wiki_id = $1 AND from_key = $2', [
+        TEST_WIKI,
+        key,
+      ]);
+      await testPool.query('DELETE FROM section_links WHERE to_wiki_id = $1 AND to_key = $2', [
+        TEST_WIKI,
+        key,
+      ]);
+      await testPool.query('DELETE FROM section_history WHERE wiki_id = $1 AND section_key = $2', [
+        TEST_WIKI,
+        key,
+      ]);
     }
     await testPool.query('DELETE FROM wiki_sections WHERE wiki_id = $1', [TEST_WIKI]);
     await testPool.end();
@@ -272,7 +287,11 @@ describe('validateWiki — orphan detection', () => {
            AND NOT EXISTS (SELECT 1 FROM wiki_sections p WHERE p.title = s.parent AND p.wiki_id = s.wiki_id)`,
         [TEST_WIKI, childKey],
       );
-      assert.equal(parseInt(rows[0].count), 0, 'Child with valid parent title should not be flagged');
+      assert.equal(
+        parseInt(rows[0].count),
+        0,
+        'Child with valid parent title should not be flagged',
+      );
     });
   });
 });
@@ -303,7 +322,10 @@ describe('insertExplicitLinks — bulk INSERT', () => {
       );
 
       assert.equal(links.length, 3);
-      assert.deepEqual(links.map((r) => r.to_key), targetKeys);
+      assert.deepEqual(
+        links.map((r) => r.to_key),
+        targetKeys,
+      );
     });
   });
 
@@ -376,7 +398,8 @@ describe('findSimilarSections — NULL embedding fallback', () => {
       assert.equal(targetCheck[0].embedding, null, 'Target should have NULL embedding');
 
       // Should be able to fall back to Levenshtein keyword search
-      const { rows: fallback } = await client.query(`
+      const { rows: fallback } = await client.query(
+        `
         SELECT key, wiki_id, title,
           LEVENSHTEIN(key, $1) as distance
         FROM wiki_sections
@@ -384,7 +407,9 @@ describe('findSimilarSections — NULL embedding fallback', () => {
           AND LEVENSHTEIN(key, $1) < LENGTH($1)
         ORDER BY distance
         LIMIT 5
-      `, [key, TEST_WIKI]);
+      `,
+        [key, TEST_WIKI],
+      );
 
       // Should return at least the other section (it shares the "test-null-embedding" prefix)
       assert.ok(fallback.length > 0, 'Keyword fallback should return results');

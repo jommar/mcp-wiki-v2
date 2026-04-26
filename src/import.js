@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { pool } from './db.js';
+import { pool as defaultPool } from './db.js';
 import { getEmbedding } from './embedding.js';
 import { logger } from '../logger.js';
 
@@ -99,7 +99,8 @@ export function moveFile(from, to) {
  * @param {string} filePath - Path to the .md file
  * @returns {Promise<{ wikiId: string, sections: number, imported: boolean, error?: string }>}
  */
-export async function importFile(filePath) {
+export async function importFile(filePath, { pool: customPool } = {}) {
+  const activePool = customPool || defaultPool;
   const fileName = path.basename(filePath);
   const content = await fs.promises.readFile(filePath, 'utf8');
 
@@ -111,14 +112,21 @@ export async function importFile(filePath) {
 
   const sections = parseAllSections(content);
   if (!sections) {
-    return { wikiId: wikiId, sections: 0, imported: false, error: 'No valid frontmatter sections found' };
+    return {
+      wikiId: wikiId,
+      sections: 0,
+      imported: false,
+      error: 'No valid frontmatter sections found',
+    };
   }
 
   // wiki_id override: if the first section's frontmatter has a valid wiki_id field,
   // it takes precedence over the filename-derived value
   const frontmatterWikiId = sections[0].frontmatter.wiki_id;
   const resolvedWikiId =
-    frontmatterWikiId && typeof frontmatterWikiId === 'string' && WIKI_ID_PATTERN.test(frontmatterWikiId)
+    frontmatterWikiId &&
+    typeof frontmatterWikiId === 'string' &&
+    WIKI_ID_PATTERN.test(frontmatterWikiId)
       ? frontmatterWikiId
       : wikiId;
 
@@ -135,7 +143,7 @@ export async function importFile(filePath) {
     }
   }
 
-  const client = await pool.connect();
+  const client = await activePool.connect();
   try {
     await client.query('BEGIN');
 
@@ -167,7 +175,12 @@ export async function importFile(filePath) {
 
       if (rows.length === 0) {
         await client.query('ROLLBACK');
-        return { wikiId: resolvedWikiId, sections: 0, imported: false, error: `Upsert failed for key: ${key}` };
+        return {
+          wikiId: resolvedWikiId,
+          sections: 0,
+          imported: false,
+          error: `Upsert failed for key: ${key}`,
+        };
       }
 
       const sectionId = rows[0].id;
@@ -180,7 +193,9 @@ export async function importFile(filePath) {
           sectionId,
         ]);
       } catch (err) {
-        logger.warn(`Failed to generate embedding for ${resolvedWikiId}/${key}`, { error: err.message });
+        logger.warn(`Failed to generate embedding for ${resolvedWikiId}/${key}`, {
+          error: err.message,
+        });
         // Don't fail the import for embedding errors
       }
 
@@ -202,7 +217,8 @@ export async function importFile(filePath) {
  * Successful files move to success/, failed files move to fail/.
  * @returns {Promise<{ total: number, success: number, failed: number, errors: Array<{ file: string, error: string }> }>}
  */
-export async function processStaging() {
+export async function processStaging({ pool: customPool } = {}) {
+  const activePool = customPool || defaultPool;
   // Ensure directories exist
   fs.mkdirSync(STAGING_DIR, { recursive: true });
   fs.mkdirSync(SUCCESS_DIR, { recursive: true });
@@ -228,7 +244,7 @@ export async function processStaging() {
     const filePath = path.join(STAGING_DIR, file);
 
     try {
-      const result = await importFile(filePath);
+      const result = await importFile(filePath, { pool: activePool });
 
       if (result.imported) {
         moveFile(filePath, path.join(SUCCESS_DIR, file));

@@ -21,7 +21,7 @@ services:
 
   wiki-server:
     build: .
-    user: "${UID:-1000}:${GID:-1000}"
+    user: '${UID:-1000}:${GID:-1000}'
     container_name: wiki-v2-server
     working_dir: /home/dev/mcp/wiki-v2
     volumes:
@@ -41,7 +41,7 @@ services:
 
   wiki-cron:
     build: .
-    user: "root"
+    user: 'root'
     container_name: wiki-v2-cron
     working_dir: /home/dev/mcp/wiki-v2
     volumes:

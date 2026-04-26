@@ -135,11 +135,13 @@ describe('Semaphore', () => {
     const sem = new Semaphore(5);
     let ran = false;
 
-    return sem.run(() => {
-      ran = true;
-    }).then(() => {
-      assert.equal(ran, true);
-    });
+    return sem
+      .run(() => {
+        ran = true;
+      })
+      .then(() => {
+        assert.equal(ran, true);
+      });
   });
 
   it('handles errors without breaking the semaphore', async () => {

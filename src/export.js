@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import pkg from 'pg';
-import { pool } from './db.js';
+import { pool as defaultPool } from './db.js';
 import { logger } from '../logger.js';
 
 const { Query } = pkg;
@@ -58,8 +58,9 @@ export function buildFrontmatter(section) {
  * @param {string} outputDir - Directory to write the file to
  * @returns {Promise<{ wikiId: string, exported: number, filePath: string | null }>}
  */
-export async function exportWiki(wikiId, outputDir) {
-  const client = await pool.connect();
+export async function exportWiki(wikiId, outputDir, { pool: customPool } = {}) {
+  const activePool = customPool || defaultPool;
+  const client = await activePool.connect();
   try {
     const fileName = `${wikiId}.md`;
     const filePath = path.join(outputDir, fileName);
@@ -131,14 +132,15 @@ export async function exportWiki(wikiId, outputDir) {
  * @param {string} outputDir - Directory to write files to
  * @returns {Promise<Array<{ wikiId: string, exported: number, filePath: string }>>}
  */
-export async function exportAllWikis(outputDir) {
-  const { rows: wikis } = await pool.query(
+export async function exportAllWikis(outputDir, { pool: customPool } = {}) {
+  const activePool = customPool || defaultPool;
+  const { rows: wikis } = await activePool.query(
     'SELECT DISTINCT wiki_id FROM wiki_sections ORDER BY wiki_id',
   );
 
   const results = [];
   for (const { wiki_id } of wikis) {
-    const result = await exportWiki(wiki_id, outputDir);
+    const result = await exportWiki(wiki_id, outputDir, { pool: activePool });
     if (result.exported > 0) results.push(result);
   }
   return results;

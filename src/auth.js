@@ -21,13 +21,13 @@ const CACHE_TTL = parseInt(process.env.AUTH_CACHE_TTL_MS, 10) || 5 * 60 * 1000; 
 const FAILED_CACHE_TTL = parseInt(process.env.AUTH_FAILED_CACHE_TTL_MS, 10) || 60_000; // 1 min
 
 const pool = new pg.Pool({
-  host:     process.env.DB_HOST     || 'localhost',
-  port:     parseInt(process.env.DB_PORT, 10) || 5433,
-  user:     process.env.DB_USER     || 'wiki',
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT, 10) || 5433,
+  user: process.env.DB_USER || 'wiki',
   password: process.env.DB_PASSWORD || 'wiki',
   database: ADMIN_DB,
   max: 2,
-  idleTimeoutMillis:     30_000,
+  idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
 });
 
@@ -94,8 +94,5 @@ export function flushAuthCache() {
 
 /** Fire-and-forget: update last_used_at on successful auth. */
 export async function touchKey(name) {
-  await pool.query(
-    `UPDATE api_keys SET last_used_at = NOW() WHERE name = $1`,
-    [name],
-  );
+  await pool.query(`UPDATE api_keys SET last_used_at = NOW() WHERE name = $1`, [name]);
 }

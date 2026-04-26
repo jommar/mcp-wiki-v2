@@ -12,18 +12,15 @@ import pg from 'pg';
 const ADMIN_DB = 'wiki_admin';
 
 const pool = new pg.Pool({
-  host:     process.env.DB_HOST     || 'localhost',
-  port:     parseInt(process.env.DB_PORT, 10) || 5433,
-  user:     process.env.DB_USER     || 'wiki',
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT, 10) || 5433,
+  user: process.env.DB_USER || 'wiki',
   password: process.env.DB_PASSWORD || 'wiki',
   database: 'postgres', // connect to default DB to run CREATE DATABASE
 });
 
 try {
-  const { rows } = await pool.query(
-    'SELECT 1 FROM pg_database WHERE datname = $1',
-    [ADMIN_DB],
-  );
+  const { rows } = await pool.query('SELECT 1 FROM pg_database WHERE datname = $1', [ADMIN_DB]);
 
   if (rows.length > 0) {
     console.log(`"${ADMIN_DB}" already exists — nothing to do.`);

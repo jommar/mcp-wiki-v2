@@ -154,10 +154,16 @@ describe('validateFrontmatter', () => {
   });
 
   it('returns error for invalid key format', () => {
-    assert.match(validateFrontmatter({ key: 'Invalid Key!', parent: 'Topic', title: 'Title' }), /invalid key format/i);
+    assert.match(
+      validateFrontmatter({ key: 'Invalid Key!', parent: 'Topic', title: 'Title' }),
+      /invalid key format/i,
+    );
   });
 
   it('accepts keys with proper lowercase-hyphen format', () => {
-    assert.equal(validateFrontmatter({ key: 'valid-key-123', parent: 'Topic', title: 'Title' }), null);
+    assert.equal(
+      validateFrontmatter({ key: 'valid-key-123', parent: 'Topic', title: 'Title' }),
+      null,
+    );
   });
 });

@@ -82,7 +82,8 @@ export async function browseSections(topic, wikiId = null, limit = 100, offset =
   if (conditions.length) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
-  query += ' ORDER BY parent, key LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+  query +=
+    ' ORDER BY parent, key LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
   params.push(limit, offset);
 
   const { rows } = await getPool().query(query, params);

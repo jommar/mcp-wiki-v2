@@ -56,7 +56,7 @@ Good: `approval-routing`, `approval-notifications`, `approval-escalations`, `app
 - 2–4 links per section. More is noise; fewer is isolation.
 - On update, reconsider links — stale links are worse than none.
 - `auto_link_sections` is a backstop, not a substitute for thoughtful linking.
-- `create_sections` auto-links all batch-created sections to each other — still set `relatedKeys` to link them to *existing* sections.
+- `create_sections` auto-links all batch-created sections to each other — still set `relatedKeys` to link them to _existing_ sections.
 - Safety net: sections with no outgoing links are auto-linked on first read via embeddings. Don't rely on this — it fires only once per orphan.
 
 ### 0.6 Updates and History

@@ -6,6 +6,7 @@ import * as wikiExport from './export.js';
 import * as wikiImport from './import.js';
 import { logger } from '../logger.js';
 import { getEmbedding } from './embedding.js';
+import { requestContext } from './context.js';
 
 // Constants
 export const MAX_BATCH_KEYS = 20;
@@ -435,7 +436,9 @@ export async function deleteSection(wikiId, key) {
 
 export async function importWiki() {
   // Process all files in staging
-  const result = await wikiImport.processStaging();
+  const ctx = requestContext.getStore();
+  const pool = ctx?.pool;
+  const result = await wikiImport.processStaging({ pool });
 
   // If any files were imported successfully, run auto-link for affected wikis
   if (result.success > 0) {
@@ -449,12 +452,14 @@ export async function importWiki() {
 // ─── EXPORT OPERATIONS ────────────────────────────────────────────────────────
 
 export async function exportWiki(outputDir, wikiId) {
+  const ctx = requestContext.getStore();
+  const pool = ctx?.pool;
   let results;
   if (wikiId) {
-    const result = await wikiExport.exportWiki(wikiId, outputDir);
+    const result = await wikiExport.exportWiki(wikiId, outputDir, { pool });
     results = [result];
   } else {
-    results = await wikiExport.exportAllWikis(outputDir);
+    results = await wikiExport.exportAllWikis(outputDir, { pool });
   }
   return formatResponse({ results });
 }

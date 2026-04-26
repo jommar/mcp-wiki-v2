@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { Writable, PassThrough } from 'node:stream';
+import { Writable } from 'node:stream';
 import { yamlValue, buildFrontmatter } from '../../src/export.js';
 
 // ─── yamlValue ───────────────────────────────────────────────────────────────
@@ -39,7 +39,12 @@ describe('yamlValue', () => {
 
 describe('buildFrontmatter', () => {
   it('outputs required fields', () => {
-    const result = buildFrontmatter({ key: 'my-key', parent: 'My Topic', title: 'My Title', tags: [] });
+    const result = buildFrontmatter({
+      key: 'my-key',
+      parent: 'My Topic',
+      title: 'My Title',
+      tags: [],
+    });
     assert.ok(result.includes('key: my-key'));
     assert.ok(result.includes('parent: My Topic'));
     assert.ok(result.includes('title: My Title'));
@@ -108,8 +113,12 @@ describe('writeWhenReady backpressure', () => {
 
     // Mock stream: always signals backpressure, delegates events to emitter
     const mockStream = {
-      write() { return false; },
-      once(event, cb) { emitter.once(event, cb); },
+      write() {
+        return false;
+      },
+      once(event, cb) {
+        emitter.once(event, cb);
+      },
     };
 
     const writePromise = writeWhenReady(mockStream, 'data').then(() => {
@@ -129,8 +138,12 @@ describe('writeWhenReady backpressure', () => {
     const emitter = new EventEmitter();
 
     const mockStream = {
-      write() { return false; },
-      once(event, cb) { emitter.once(event, cb); },
+      write() {
+        return false;
+      },
+      once(event, cb) {
+        emitter.once(event, cb);
+      },
     };
 
     const writePromise = writeWhenReady(mockStream, 'data');

@@ -85,13 +85,13 @@ Related: [[portage-backend-database]]
 
 ### Auto-Linking Options
 
-| Option      | Description                                              |
-| ----------- | -------------------------------------------------------- |
-| `override`  | Re-link sections that already have links                 |
-| `reembed`   | Regenerate embeddings before linking                     |
-| `parallel`  | Process sections in parallel (default: true)             |
-| `minSimilarity` | Minimum cosine similarity threshold (0-1, default 0.1) |
-| `maxLinks`  | Maximum number of related links per section (default 4)  |
+| Option          | Description                                             |
+| --------------- | ------------------------------------------------------- |
+| `override`      | Re-link sections that already have links                |
+| `reembed`       | Regenerate embeddings before linking                    |
+| `parallel`      | Process sections in parallel (default: true)            |
+| `minSimilarity` | Minimum cosine similarity threshold (0-1, default 0.1)  |
+| `maxLinks`      | Maximum number of related links per section (default 4) |
 
 A cron job also runs auto-relink daily at 3am via the `wiki-cron` container.
 
