@@ -1,7 +1,20 @@
 // src/auth.js - API key verification against the admin DB (wiki_admin)
 import pg from 'pg';
 import { createHash } from 'node:crypto';
-import { verifyKey } from '../admin/api-keys.js';
+
+// Lazy-load verifyKey from the SaaS admin module so the server doesn't crash
+// on branches where ../admin/ doesn't exist. Falls back to null (auth disabled).
+let _verifyKey;
+async function getVerifyKey() {
+  if (_verifyKey !== undefined) return _verifyKey;
+  try {
+    const mod = await import('../admin/api-keys.js');
+    _verifyKey = mod.verifyKey;
+  } catch {
+    _verifyKey = null;
+  }
+  return _verifyKey;
+}
 
 const ADMIN_DB = 'wiki_admin';
 const CACHE_TTL = 5 * 60 * 1000; // 5 min — re-verify after revoke can propagate
@@ -42,7 +55,11 @@ export async function authenticateToken(token) {
     return { name: hit.name, readonly: hit.readonly };
   }
 
-  // Verify against every active key (typically <100; 1000× SHA-256 each)
+  // Lazy-load verifyKey; null if ../admin/ doesn't exist on this branch
+  const verifyKey = await getVerifyKey();
+  if (!verifyKey) return null; // auth unavailable without the SaaS admin module
+
+  // Verify against every active key (typically <100; bcrypt comparison each)
   const keys = await getActiveKeys();
   for (const k of keys) {
     if (verifyKey(token, k.key_hash)) {

@@ -958,6 +958,7 @@ process.on('unhandledRejection', (reason) => {
 
 import { runMigrations } from './migrate.js';
 import { connect } from './transport.js';
+import { ensureDatabase } from './ensure-db.js';
 
 logger.info('Starting Wiki Explorer V2 MCP Server', {
   dbHost: process.env.DB_HOST || 'localhost',
@@ -966,5 +967,9 @@ logger.info('Starting Wiki Explorer V2 MCP Server', {
   node: process.version,
 });
 
+// In stdio mode, auto-create the database so migrations can run.
+// HTTP mode doesn't need this — the admin DB is separate, and client DBs
+// are created on-demand via client-pool.js.
+await ensureDatabase();
 await runMigrations();
 httpServer = await connect(server);
