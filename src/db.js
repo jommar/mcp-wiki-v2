@@ -69,7 +69,7 @@ export async function browseSections(topic, wikiId = null, limit = 100, offset =
 
   if (topic) {
     conditions.push(`(
-      LOWER(parent) LIKE $${params.length + 1}
+      LOWER(COALESCE(parent, 'Root')) LIKE $${params.length + 1}
       OR LOWER(title) LIKE $${params.length + 1}
       OR metadata->>'breadcrumbs' ILIKE $${params.length + 1}
     )`);
@@ -110,7 +110,7 @@ async function searchSemantic(query, { wikiId, parent, limit, offset = 0 }) {
       params.push(wikiId);
     }
     if (parent) {
-      conditions.push(`LOWER(parent) LIKE $${params.length + 1}`);
+      conditions.push(`LOWER(COALESCE(parent, 'Root')) LIKE $${params.length + 1}`);
       params.push(`%${parent.toLowerCase()}%`);
     }
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
@@ -160,10 +160,12 @@ export async function searchSections(
   // Try semantic search first
   const semanticResults = await searchSemantic(query, { wikiId, parent, limit, offset });
 
-  // If we got results with meaningful similarity, use them
-  const similarityThreshold = parseFloat(process.env.SIMILARITY_THRESHOLD || '0.1');
+  // If we got results with meaningful similarity, filter by threshold and use them
+  const similarityThreshold = parseFloat(process.env.SIMILARITY_THRESHOLD || '0.2');
   if (semanticResults.length > 0 && semanticResults.some((r) => r.rank > similarityThreshold)) {
-    return semanticResults;
+    const filtered = semanticResults.filter((r) => r.rank > similarityThreshold);
+    if (filtered.length > 0) return filtered;
+    // If nothing passed the threshold, fall through to keyword search
   }
 
   // Fall back to keyword search
@@ -175,7 +177,7 @@ export async function searchSections(
     params.push(wikiId);
   }
   if (parent) {
-    conditions.push(`LOWER(parent) LIKE $${params.length + 1}`);
+    conditions.push(`LOWER(COALESCE(parent, 'Root')) LIKE $${params.length + 1}`);
     params.push(`%${parent.toLowerCase()}%`);
   }
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -225,7 +227,7 @@ async function searchFuzzy(query, { wikiId, parent, limit, offset = 0 }) {
     params.push(wikiId);
   }
   if (parent) {
-    conditions.push(`LOWER(parent) LIKE $${params.length + 1}`);
+    conditions.push(`LOWER(COALESCE(parent, 'Root')) LIKE $${params.length + 1}`);
     params.push(`%${parent.toLowerCase()}%`);
   }
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -581,15 +583,21 @@ export async function updateSection({
     params,
   );
 
-  // Log history if content changed — stores both old and new content
-  if (content !== undefined && rows.length > 0) {
-    const oldContent = existing[0].content || '';
+  // Log history for any field change (content, title, parent, tags).
+  // The DB trigger (log_section_history) also logs when content changes with
+  // a hardcoded 'update' reason. We log here too so the user-provided `reason`
+  // is captured. Duplicate entries (one from trigger, one from app) are expected
+  // for content changes — the entry with the user's reason is authoritative.
+  if (
+    rows.length > 0 &&
+    (content !== undefined || title !== undefined || parent !== undefined || tags !== undefined)
+  ) {
+    const oldContent = content !== undefined ? existing[0].content || '' : null;
+    const newContent = content !== undefined ? content : existing[0].content;
     await getPool().query(
-      `
-      INSERT INTO section_history (wiki_id, section_key, content_before, content_after, change_reason)
-      VALUES ($1, $2, $3, $4, $5)
-    `,
-      [wikiId, key, oldContent, content, reason || 'update'],
+      `INSERT INTO section_history (wiki_id, section_key, content_before, content_after, change_reason)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [wikiId, key, oldContent, newContent, reason || 'update'],
     );
   }
 

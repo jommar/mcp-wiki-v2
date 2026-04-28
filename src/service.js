@@ -273,7 +273,6 @@ export async function createSection(wikiId, key, title, content, parent, tags, r
       key: result.key,
       wikiId: result.wiki_id,
       title: result.title,
-      parent: result.parent,
       created: true,
     });
   }

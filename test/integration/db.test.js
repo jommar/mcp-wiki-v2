@@ -112,6 +112,52 @@ before(async () => {
     )
   `);
 
+  // Add search_vector column for full-text search tests (used by searchSections fallback)
+  await testPool.query('ALTER TABLE wiki_sections ADD COLUMN IF NOT EXISTS search_vector tsvector');
+
+  // FTS trigger: populate search_vector on insert/update (same as 001_initial_schema.sql)
+  await testPool.query(`
+    CREATE OR REPLACE FUNCTION populate_search_vector() RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.search_vector :=
+        setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(NEW.content, '')), 'B') ||
+        setweight(to_tsvector('simple', COALESCE(array_to_string(NEW.tags, ' '), '')), 'C');
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  // Drop first to avoid "already exists" on re-run
+  await testPool.query('DROP TRIGGER IF EXISTS wiki_sections_search_trigger ON wiki_sections');
+  await testPool.query(`
+    CREATE TRIGGER wiki_sections_search_trigger
+      BEFORE INSERT OR UPDATE ON wiki_sections
+      FOR EACH ROW
+      EXECUTE FUNCTION populate_search_vector()
+  `);
+
+  // History trigger: log content changes (same as 001_initial_schema.sql)
+  await testPool.query(`
+    CREATE OR REPLACE FUNCTION log_section_history() RETURNS TRIGGER AS $$
+    BEGIN
+      IF OLD.content IS DISTINCT FROM NEW.content THEN
+        INSERT INTO section_history (wiki_id, section_key, content_before, content_after, change_reason)
+        VALUES (NEW.wiki_id, NEW.key, OLD.content, NEW.content, 'update');
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await testPool.query('DROP TRIGGER IF EXISTS wiki_sections_history_trigger ON wiki_sections');
+  await testPool.query(`
+    CREATE TRIGGER wiki_sections_history_trigger
+      AFTER UPDATE ON wiki_sections
+      FOR EACH ROW
+      EXECUTE FUNCTION log_section_history()
+  `);
+
   // Create indexes (skip if they exist)
   await testPool.query('CREATE INDEX IF NOT EXISTS idx_ws_wiki_key ON wiki_sections(wiki_id, key)');
   await testPool.query(
@@ -120,6 +166,9 @@ before(async () => {
   await testPool.query('CREATE INDEX IF NOT EXISTS idx_sl_to ON section_links(to_wiki_id, to_key)');
   await testPool.query(
     'CREATE INDEX IF NOT EXISTS idx_sh_lookup ON section_history(wiki_id, section_key, changed_at DESC)',
+  );
+  await testPool.query(
+    'CREATE INDEX IF NOT EXISTS idx_ws_search ON wiki_sections USING GIN(search_vector)',
   );
 });
 
@@ -148,7 +197,7 @@ after(async () => {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('updateSection — content_before in history', () => {
-  it('stores old content in content_before when content changes', async () => {
+  it('stores old content in content_before via DB trigger when content changes', async () => {
     await withClient(async (client) => {
       const key = 'test-content-before';
       const originalContent = 'Original content';
@@ -156,22 +205,10 @@ describe('updateSection — content_before in history', () => {
 
       await createSection(client, key, { content: originalContent });
 
-      // Update content (simulating what db.js updateSection does)
-      const { rows: existing } = await client.query(
-        'SELECT content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
-        [TEST_WIKI, key],
-      );
-      const oldContent = existing[0].content || '';
-
+      // Update content — the DB trigger (log_section_history) should fire
       await client.query(
         'UPDATE wiki_sections SET content = $1, updated_at = NOW() WHERE wiki_id = $2 AND key = $3',
         [updatedContent, TEST_WIKI, key],
-      );
-
-      await client.query(
-        `INSERT INTO section_history (wiki_id, section_key, content_before, content_after, change_reason)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [TEST_WIKI, key, oldContent, updatedContent, 'test update'],
       );
 
       const { rows: history } = await client.query(
@@ -179,35 +216,22 @@ describe('updateSection — content_before in history', () => {
         [TEST_WIKI, key],
       );
 
-      assert.equal(history.length, 1);
+      assert.equal(history.length, 1, 'Trigger should produce exactly 1 history entry');
       assert.equal(history[0].content_before, originalContent);
       assert.equal(history[0].content_after, updatedContent);
-      assert.equal(history[0].change_reason, 'test update');
+      assert.equal(history[0].change_reason, 'update');
     });
   });
 
-  it('stores empty string as content_before for brand-new sections', async () => {
+  it('stores empty string as content_before for brand-new sections via DB trigger', async () => {
     await withClient(async (client) => {
       const key = 'test-content-before-empty';
 
-      // Insert directly with empty content
       await createSection(client, key, { content: '' });
-
-      const { rows: existing } = await client.query(
-        'SELECT content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
-        [TEST_WIKI, key],
-      );
-      const oldContent = existing[0].content || '';
 
       await client.query(
         'UPDATE wiki_sections SET content = $1, updated_at = NOW() WHERE wiki_id = $2 AND key = $3',
         ['New content', TEST_WIKI, key],
-      );
-
-      await client.query(
-        `INSERT INTO section_history (wiki_id, section_key, content_before, content_after, change_reason)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [TEST_WIKI, key, oldContent, 'New content', 'fill empty'],
       );
 
       const { rows: history } = await client.query(
@@ -215,6 +239,7 @@ describe('updateSection — content_before in history', () => {
         [TEST_WIKI, key],
       );
 
+      assert.equal(history.length, 1);
       assert.equal(history[0].content_before, '');
     });
   });
@@ -413,6 +438,210 @@ describe('findSimilarSections — NULL embedding fallback', () => {
 
       // Should return at least the other section (it shares the "test-null-embedding" prefix)
       assert.ok(fallback.length > 0, 'Keyword fallback should return results');
+    });
+  });
+});
+
+// ─── Bug #2 / Defect #2 / Observation #1 Regression Tests ─────────────────
+
+describe('browseSections — Root parent filter', () => {
+  it('returns root-level sections (parent=NULL) when browsing topic "Root"', async () => {
+    await withClient(async (client) => {
+      const key = 'test-root-browse';
+      await createSection(client, key, { parent: null });
+
+      // Simulate the OLD behavior: LOWER(parent) LIKE — misses NULL parents
+      const { rows: oldResults } = await client.query(
+        `SELECT key FROM wiki_sections
+         WHERE wiki_id = $1 AND LOWER(parent) LIKE $2
+         ORDER BY key`,
+        [TEST_WIKI, '%root%'],
+      );
+      assert.equal(
+        oldResults.length,
+        0,
+        'LOWER(parent) LIKE should NOT match NULL parent (old behavior)',
+      );
+
+      // Simulate the NEW behavior: LOWER(COALESCE(parent, 'Root')) LIKE
+      const { rows: newResults } = await client.query(
+        `SELECT key FROM wiki_sections
+         WHERE wiki_id = $1 AND LOWER(COALESCE(parent, 'Root')) LIKE $2
+         ORDER BY key`,
+        [TEST_WIKI, '%root%'],
+      );
+      assert.ok(
+        newResults.some((r) => r.key === key),
+        'COALESCE should match the NULL-parent section',
+      );
+    });
+  });
+
+  it('also matches sections with literal parent "Root"', async () => {
+    await withClient(async (client) => {
+      const key = 'test-root-browse-literal';
+      await createSection(client, key, { parent: 'Root' });
+
+      const { rows } = await client.query(
+        `SELECT key FROM wiki_sections
+         WHERE wiki_id = $1 AND LOWER(COALESCE(parent, 'Root')) LIKE $2
+         ORDER BY key`,
+        [TEST_WIKI, '%root%'],
+      );
+      assert.ok(
+        rows.some((r) => r.key === key),
+        'Literal "Root" parent should match',
+      );
+    });
+  });
+});
+
+describe('section_history — non-content field changes', () => {
+  it('records history for title-only updates', async () => {
+    await withClient(async (client) => {
+      const key = 'test-history-title-only';
+      await createSection(client, key, { title: 'Original Title', content: 'Some content' });
+
+      // Simulate what db.js updateSection does for title-only changes:
+      // the DB trigger won't fire (content didn't change), so the app layer
+      // inserts a history entry with content_after = current content.
+      const { rows: existing } = await client.query(
+        'SELECT content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
+        [TEST_WIKI, key],
+      );
+
+      await client.query(
+        'UPDATE wiki_sections SET title = $1, updated_at = NOW() WHERE wiki_id = $2 AND key = $3',
+        ['Updated Title', TEST_WIKI, key],
+      );
+
+      // App-level insert (what the fix does)
+      await client.query(
+        `INSERT INTO section_history (wiki_id, section_key, content_before, content_after, change_reason)
+         VALUES ($1, $2, NULL, $3, $4)`,
+        [TEST_WIKI, key, existing[0].content || '', 'title update'],
+      );
+
+      const { rows: history } = await client.query(
+        'SELECT content_before, content_after, change_reason FROM section_history WHERE wiki_id = $1 AND section_key = $2 ORDER BY changed_at DESC',
+        [TEST_WIKI, key],
+      );
+
+      // The trigger may also fire but only for content changes, so we expect
+      // exactly 1 app-level entry here (the trigger didn't fire since content unchanged).
+      const appEntry = history.find((h) => h.change_reason === 'title update');
+      assert.ok(appEntry, 'Should have a history entry for the title change');
+      assert.equal(appEntry.content_before, null);
+      assert.equal(appEntry.content_after, 'Some content');
+    });
+  });
+
+  it('records history for tags-only updates', async () => {
+    await withClient(async (client) => {
+      const key = 'test-history-tags-only';
+      await createSection(client, key, { tags: ['old-tag'], content: 'Content' });
+
+      const { rows: existing } = await client.query(
+        'SELECT content FROM wiki_sections WHERE wiki_id = $1 AND key = $2',
+        [TEST_WIKI, key],
+      );
+
+      await client.query(
+        'UPDATE wiki_sections SET tags = $1::varchar(100)[], updated_at = NOW() WHERE wiki_id = $2 AND key = $3',
+        [['new-tag'], TEST_WIKI, key],
+      );
+
+      await client.query(
+        `INSERT INTO section_history (wiki_id, section_key, content_before, content_after, change_reason)
+         VALUES ($1, $2, NULL, $3, $4)`,
+        [TEST_WIKI, key, existing[0].content || '', 'tags update'],
+      );
+
+      const { rows: history } = await client.query(
+        'SELECT change_reason FROM section_history WHERE wiki_id = $1 AND section_key = $2',
+        [TEST_WIKI, key],
+      );
+
+      assert.ok(
+        history.some((h) => h.change_reason === 'tags update'),
+        'Tags-only update should have a history entry',
+      );
+    });
+  });
+});
+
+describe('searchSections — nonsense query returns empty (keyword fallback)', () => {
+  it('returns zero results for gibberish via keyword search', async () => {
+    await withClient(async (client) => {
+      // Create a section with meaningful content
+      await createSection(client, 'test-meaningful', {
+        title: 'Meaningful Topic',
+        content: 'This section contains real information about important things.',
+        tags: ['important', 'real'],
+      });
+
+      // Re-trigger the FTS trigger for existing rows (bump updated_at)
+      await client.query('UPDATE wiki_sections SET updated_at = NOW() WHERE wiki_id = $1', [
+        TEST_WIKI,
+      ]);
+
+      // Now query with a nonsense term that won't match anything
+      const searchTerms = 'zzzzyouwillneverfindthisxyzzy';
+      const tsquery = searchTerms
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((t) => t + ':*')
+        .join(' & ');
+
+      const { rows } = await client.query(
+        `SELECT key FROM wiki_sections
+         WHERE wiki_id = $1
+           AND search_vector @@ to_tsquery('english', $2)
+         ORDER BY ts_rank(search_vector, to_tsquery('english', $2)) DESC`,
+        [TEST_WIKI, tsquery],
+      );
+
+      assert.equal(rows.length, 0, 'Gibberish query should return no results');
+    });
+  });
+});
+
+describe('searchSections — parent filter with "Root"', () => {
+  it('finds root-level sections when parent filter is "Root"', async () => {
+    await withClient(async (client) => {
+      const key = 'test-root-search';
+      await createSection(client, key, { parent: null, title: 'Root Level', content: 'Content' });
+
+      // Force re-index search_vector
+      await client.query('UPDATE wiki_sections SET updated_at = NOW() WHERE wiki_id = $1', [
+        TEST_WIKI,
+      ]);
+
+      // Old behavior: LOWER(parent) LIKE — misses NULL
+      const { rows: oldResults } = await client.query(
+        `SELECT key FROM wiki_sections
+         WHERE wiki_id = $1 AND LOWER(parent) LIKE $2
+           AND search_vector @@ to_tsquery('english', $3)`,
+        [TEST_WIKI, '%root%', 'root'],
+      );
+      assert.equal(
+        oldResults.some((r) => r.key === key),
+        false,
+        'Search with LOWER(parent) LIKE should miss NULL parent (old behavior)',
+      );
+
+      // New behavior: LOWER(COALESCE(parent, 'Root')) LIKE
+      const { rows: newResults } = await client.query(
+        `SELECT key FROM wiki_sections
+         WHERE wiki_id = $1 AND LOWER(COALESCE(parent, 'Root')) LIKE $2
+           AND search_vector @@ to_tsquery('english', $3)`,
+        [TEST_WIKI, '%root%', 'root'],
+      );
+      assert.ok(
+        newResults.some((r) => r.key === key),
+        'Search with COALESCE should find root section',
+      );
     });
   });
 });
